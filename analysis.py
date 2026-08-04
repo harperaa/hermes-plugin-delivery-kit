@@ -61,14 +61,19 @@ FIRST classify meetingType:
 - overview (2-3 sentences)
 - insights: concrete, decision-useful takeaways (3-8)
 - sentimentScore/-Label: the counterpart's sentiment (the client's when
-  present; the room's overall for internal). USE THE FULL RANGE — 0.0 is
-  genuinely neutral; do not cluster at 0.7-0.9. A merely-fine meeting is
-  ~0.1-0.3; reserve >0.6 for real enthusiasm heard in the words.
+  present; the room's overall for internal). Read the OVERALL DEMEANOR,
+  not only explicit statements — an engaged, warm client who jokes, plans
+  ahead, and leans into the work is genuinely positive even without saying
+  "I'm happy". Guide: thrilled/energized 0.7-0.9 (reserve 0.9+ for
+  exceptional delight); warm and engaged 0.5-0.7; flat/transactional
+  0.2-0.4; 0.0 truly neutral; tension or frustration goes negative.
 - satisfactionScore: ONLY for client/sales meetings, else -1. CALIBRATION
-  BANDS — use them, do not default to 7-9:
-    9-10: explicit praise PLUS renewal/expansion/referral signals
-    7-8:  clear stated positive evidence about the work
-    5-6:  neutral or no direct evidence either way
+  BANDS — use the full range:
+    9-10: strong praise, OR clear renewal/expansion/referral signals, OR
+          unmistakable delight in the engagement
+    7-8:  positive evidence — praise, visible happy engagement with the
+          work, momentum
+    5-6:  neutral or no evidence either way
     3-4:  stated friction, disappointment, or repeated pushback
     0-2:  explicit dissatisfaction or churn threat
   satisfactionRationale must cite the evidence (or say "not a client
