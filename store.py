@@ -41,7 +41,9 @@ def connect() -> sqlite3.Connection:
 def upsert_meeting(provider: str, external_id: Optional[str], title: str,
                    held_at: Optional[float], duration_min: Optional[float],
                    transcript: str, provider_summary: str = "") -> tuple[int, bool]:
-    """Insert a meeting; skip when (provider, external_id) already exists.
+    """Insert a meeting; when (provider, external_id) already exists, refresh
+    the provider-owned fields (transcript, summary, timing) in place — the
+    provider is the source of truth — while leaving the analysis untouched.
     Returns (id, created)."""
     conn = connect()
     try:
@@ -50,6 +52,16 @@ def upsert_meeting(provider: str, external_id: Optional[str], title: str,
                 "select id from meetings where provider=? and external_id=?",
                 (provider, external_id)).fetchone()
             if row:
+                if transcript:
+                    with conn:
+                        conn.execute(
+                            "update meetings set title=?, "
+                            "held_at=coalesce(?, held_at), "
+                            "duration_min=coalesce(?, duration_min), "
+                            "transcript=?, provider_summary=? where id=?",
+                            (title.strip()[:300], held_at, duration_min,
+                             transcript[:400_000], provider_summary[:20_000],
+                             row[0]))
                 return row[0], False
         with conn:
             cur = conn.execute(

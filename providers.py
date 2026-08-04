@@ -199,6 +199,47 @@ def provider_status() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Transcript timestamps — providers report sentence offsets in seconds or ms;
+# lines render as "[M:SS] Speaker: text" so the dashboard's evidence modal
+# (and the analyst) can see WHEN something was said.
+# ---------------------------------------------------------------------------
+
+def _fmt_ts(sec: float) -> str:
+    sec = max(0, int(sec))
+    h, rem = divmod(sec, 3600)
+    m, s2 = divmod(rem, 60)
+    return f"[{h}:{m:02d}:{s2:02d}]" if h else f"[{m}:{s2:02d}]"
+
+
+def _seg_ts(seg: dict) -> Optional[float]:
+    for k in ("start_time", "startTime", "start", "offset", "timestamp"):
+        v = seg.get(k)
+        if isinstance(v, (int, float)):
+            return float(v)
+    return None
+
+
+def _stamp_lines(rows: list, duration_min: Optional[float] = None) -> str:
+    """rows = [(ts_or_None, speaker, text)] -> transcript text.
+
+    Offsets whose max exceeds the meeting length (or a day, when duration is
+    unknown) are treated as milliseconds — no per-provider unit guessing.
+    """
+    vals = [t for t, _, _ in rows if t is not None]
+    scale = 1.0
+    if vals:
+        mx = max(vals)
+        limit = duration_min * 60 * 3 if duration_min else 86400.0
+        if mx > max(limit, 60.0):
+            scale = 0.001
+    lines = []
+    for t, speaker, text in rows:
+        prefix = _fmt_ts(t * scale) + " " if t is not None else ""
+        lines.append(f"{prefix}{speaker}: {text}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Fireflies sync
 # ---------------------------------------------------------------------------
 
@@ -210,7 +251,7 @@ query Transcripts($limit: Int) {
     date
     duration
     summary { overview action_items keywords }
-    sentences { text speaker_name }
+    sentences { text speaker_name start_time }
   }
 }
 """
@@ -234,9 +275,6 @@ def fireflies_fetch(limit: int = 25) -> list[dict]:
     out = []
     for t in (payload.get("data") or {}).get("transcripts") or []:
         sentences = t.get("sentences") or []
-        transcript = "\n".join(
-            f"{(s.get('speaker_name') or 'Speaker')}: {s.get('text') or ''}"
-            for s in sentences)
         summary = t.get("summary") or {}
         summary_text = "\n".join(filter(None, [
             summary.get("overview") or "",
@@ -255,6 +293,9 @@ def fireflies_fetch(limit: int = 25) -> list[dict]:
                 duration = float(t["duration"])
             except (TypeError, ValueError):
                 pass
+        transcript = _stamp_lines(
+            [(_seg_ts(s), s.get("speaker_name") or "Speaker", s.get("text") or "")
+             for s in sentences], duration)
         out.append({
             "externalId": str(t.get("id")),
             "title": t.get("title") or "Untitled meeting",
@@ -301,24 +342,25 @@ def fathom_fetch(limit: int = 15) -> list[dict]:
         {"X-Api-Key": key})
     out = []
     for m in (payload.get("items") or [])[:limit]:
-        lines = []
+        rows = []
         for seg in m.get("transcript") or []:
             speaker = seg.get("speaker") or {}
             name = (speaker.get("display_name") if isinstance(speaker, dict)
                     else str(speaker)) or "Speaker"
-            lines.append(f"{name}: {seg.get('text') or ''}")
+            rows.append((_seg_ts(seg), name, seg.get("text") or ""))
         start = _iso_to_epoch(m.get("recording_start_time")
                               or m.get("scheduled_start_time"))
         end = _iso_to_epoch(m.get("recording_end_time")
                             or m.get("scheduled_end_time"))
         duration = (end - start) / 60.0 if start and end and end > start else None
+        transcript = _stamp_lines(rows, duration)
         out.append({
             "externalId": str(m.get("id") or m.get("recording_id")
                               or m.get("url") or m.get("title")),
             "title": m.get("title") or m.get("meeting_title") or "Untitled meeting",
             "heldAt": start,
             "durationMin": duration,
-            "transcript": "\n".join(lines),
+            "transcript": transcript,
             "providerSummary": str(m.get("summary") or ""),
         })
     return out
@@ -350,9 +392,10 @@ def grain_fetch(limit: int = 10) -> list[dict]:
                            _GRAIN_HEADERS(key))
             segs = t.get("transcript") or t.get("segments") or t or []
             if isinstance(segs, list):
-                transcript = "\n".join(
-                    f"{seg.get('speaker') or 'Speaker'}: {seg.get('text') or ''}"
-                    for seg in segs if isinstance(seg, dict))
+                transcript = _stamp_lines(
+                    [(_seg_ts(seg), seg.get("speaker") or "Speaker",
+                      seg.get("text") or "")
+                     for seg in segs if isinstance(seg, dict)])
         except Exception:
             pass
         out.append({
@@ -389,9 +432,11 @@ def tldv_fetch(limit: int = 10) -> list[dict]:
                            {"x-api-key": key})
             segs = t.get("data") or t.get("transcript") or []
             if isinstance(segs, list):
-                transcript = "\n".join(
-                    f"{seg.get('speaker') or 'Speaker'}: {seg.get('text') or ''}"
-                    for seg in segs if isinstance(seg, dict))
+                transcript = _stamp_lines(
+                    [(_seg_ts(seg), seg.get("speaker") or "Speaker",
+                      seg.get("text") or "")
+                     for seg in segs if isinstance(seg, dict)],
+                    m.get("duration"))
         except Exception:
             pass
         out.append({

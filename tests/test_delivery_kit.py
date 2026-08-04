@@ -514,3 +514,33 @@ def test_autosync_ensure_creates_and_updates_job(home, monkeypatch):
     # invalid frequency ignored, keeps stored value
     info4 = schedule.ensure_sync_job(frequency_minutes=45)
     assert info4["frequencyMinutes"] == 120
+
+
+def test_transcript_timestamps_and_upsert_refresh(home):
+    # seconds-scale offsets prefix as [M:SS]
+    txt = providers._stamp_lines(
+        [(0, "A", "hi"), (75.4, "B", "yo"), (3675, "A", "bye")], 62.0)
+    assert txt.splitlines() == ["[0:00] A: hi", "[1:15] B: yo", "[1:01:15] A: bye"]
+    # millisecond offsets auto-detect against the meeting duration
+    txt_ms = providers._stamp_lines(
+        [(0, "A", "hi"), (75_400, "B", "yo")], 5.0)
+    assert txt_ms.splitlines() == ["[0:00] A: hi", "[1:15] B: yo"]
+    # no offsets -> plain lines, no prefix
+    assert providers._stamp_lines([(None, "A", "hi")]) == "A: hi"
+
+    # re-sync refreshes the stored transcript but keeps the analysis
+    mid, created = store.upsert_meeting(
+        "fireflies", "ts1", "Call", 100.0, 30.0, "A: old text")
+    assert created
+    store.save_analysis(mid, {"overview": "kept"})
+    mid2, created2 = store.upsert_meeting(
+        "fireflies", "ts1", "Call (renamed)", 200.0, 31.0, "[0:05] A: new text")
+    assert mid2 == mid and created2 is False
+    m = store.get_meeting(mid, with_transcript=True)
+    assert m["transcript"] == "[0:05] A: new text"
+    assert m["title"] == "Call (renamed)"
+    assert m["analysis"]["overview"] == "kept"
+    # empty transcript never clobbers a stored one
+    store.upsert_meeting("fireflies", "ts1", "Call", None, None, "")
+    m = store.get_meeting(mid, with_transcript=True)
+    assert m["transcript"] == "[0:05] A: new text"

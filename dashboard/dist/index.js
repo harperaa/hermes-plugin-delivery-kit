@@ -259,7 +259,20 @@
           out.push([at, at + needle.length]); found = true;
           at += needle.length;
         }
-        if (!found && needle.length > 40) {   // quote not verbatim — try its head
+        if (!found) {
+          // quote spans transcript lines (each line carries a [ts] Speaker:
+          // prefix) — match its sentences individually instead
+          (needle.match(/[^.?!]+[.?!]*/g) || []).forEach(function (frag) {
+            frag = frag.trim();
+            if (frag.length < 20) return;
+            var fp = 0;
+            while ((fp = lower.indexOf(frag, fp)) !== -1) {
+              out.push([fp, fp + frag.length]); found = true;
+              fp += frag.length;
+            }
+          });
+        }
+        if (!found && needle.length > 40) {   // last resort: the quote's head
           var p = lower.indexOf(needle.slice(0, 40));
           if (p !== -1) out.push([p, p + 40]);
         }
