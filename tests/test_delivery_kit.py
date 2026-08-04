@@ -236,6 +236,67 @@ def test_analysis_and_rollup(home, monkeypatch):
     assert found["meetings"][0]["analysis"]["sentimentLabel"] == "negative"
 
 
+def test_batch_skips_analyzed_and_persists(home, monkeypatch):
+    m1, _ = store.upsert_meeting("import", None, "Done already", 100.0, None, "t1")
+    m2, _ = store.upsert_meeting("import", None, "Needs work", 200.0, None, "t2")
+    store.save_analysis(m1, {"overview": "x", "insights": [],
+                             "sentimentScore": 0, "sentimentLabel": "neutral",
+                             "satisfactionScore": 5, "satisfactionRationale": "r"})
+    analyzed_ids = []
+
+    def fake_analyze(mid, feedback=""):
+        analyzed_ids.append(mid)
+        store.save_analysis(mid, {"overview": "y", "insights": [],
+                                  "sentimentScore": 0.1, "sentimentLabel": "neutral",
+                                  "satisfactionScore": 6,
+                                  "satisfactionRationale": "r"})
+        return {}
+
+    monkeypatch.setattr(analysis, "analyze_meeting", fake_analyze)
+    out = analysis.start_batch()
+    assert out["total"] == 1                      # only the unanalyzed one
+    import time
+    for _ in range(50):
+        if not analysis.batch_status().get("running"):
+            break
+        time.sleep(0.05)
+    st = analysis.batch_status()
+    assert st["running"] is False and st["done"] == 1 and st["failed"] == 0
+    assert analyzed_ids == [m2]
+    # nothing left -> a second start refuses
+    with pytest.raises(RuntimeError):
+        analysis.start_batch()
+
+
+def test_redo_feedback_reaches_the_prompt(home, monkeypatch):
+    mid, _ = store.upsert_meeting("import", None, "Redo me", 100.0, None,
+                                  "Client: fine I guess")
+    store.save_analysis(mid, {"overview": "old", "insights": [],
+                              "sentimentScore": 0.9, "sentimentLabel": "positive",
+                              "satisfactionScore": 9, "satisfactionRationale": "r"})
+    seen = {}
+
+    class FakeRes:
+        parsed = {"overview": "revised", "insights": [],
+                  "sentimentScore": 0.1, "sentimentLabel": "mixed",
+                  "satisfactionScore": 5, "satisfactionRationale": "revised"}
+
+    class FakeLlm:
+        def complete_structured(self, **kw):
+            seen["payload"] = kw["input"][0]["text"]
+            return FakeRes()
+
+    monkeypatch.setattr(analysis, "_llm", lambda: FakeLlm())
+    out = analysis.analyze_meeting(mid, feedback="score felt too high")
+    assert out["overview"] == "revised"
+    assert "REANALYSIS REQUEST" in seen["payload"]
+    assert "score felt too high" in seen["payload"]
+    assert "PRIOR ANALYSIS" in seen["payload"]
+    # a plain analyze has no redo scaffolding
+    analysis.analyze_meeting(mid)
+    assert "REANALYSIS REQUEST" not in seen["payload"]
+
+
 def test_analyze_requires_transcript(home):
     mid, _ = store.upsert_meeting("import", None, "Empty", None, None, "")
     with pytest.raises(RuntimeError):

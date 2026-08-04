@@ -63,7 +63,7 @@ def _llm():
     return PluginLlm(plugin_id=PLUGIN_ID)
 
 
-def analyze_meeting(meeting_id: int) -> dict:
+def analyze_meeting(meeting_id: int, feedback: str = "") -> dict:
     m = store.get_meeting(meeting_id, with_transcript=True)
     if not m:
         raise RuntimeError(f"meeting {meeting_id} not found")
@@ -72,9 +72,16 @@ def analyze_meeting(meeting_id: int) -> dict:
         text = (m.get("providerSummary") or "").strip()
     if not text:
         raise RuntimeError("meeting has no transcript to analyze")
+    redo_note = ""
+    if (feedback or "").strip():
+        prior = m.get("analysis")
+        redo_note = ("\n\nREANALYSIS REQUEST — the user reviewed the prior "
+                     "analysis and says:\n" + feedback.strip()[:2000] +
+                     ("\n\nPRIOR ANALYSIS (revise in light of the feedback):\n"
+                      + json.dumps(prior)[:4000] if prior else ""))
     payload = (f"MEETING: {m['title']}\n\n"
                f"PROVIDER SUMMARY (may be empty):\n{m.get('providerSummary') or '(none)'}\n\n"
-               f"TRANSCRIPT:\n{text[:60_000]}")
+               f"TRANSCRIPT:\n{text[:60_000]}" + redo_note)
     res = _llm().complete_structured(
         instructions=_INSTRUCTIONS,
         input=[{"type": "text", "text": payload}],
@@ -152,3 +159,85 @@ def tool_meeting_search(args: dict, **kwargs) -> str:
                              ("overview", "insights", "sentimentLabel",
                               "satisfactionScore", "lessons", "actionItems")}
     return json.dumps({"count": len(results), "meetings": results})
+
+
+# ---------------------------------------------------------------------------
+# Server-side batch: "Analyze all" survives page refreshes. Progress lives
+# in batch.json; a daemon thread walks the unanalyzed meetings; a second
+# start while running is refused; already-analyzed meetings are skipped.
+# ---------------------------------------------------------------------------
+
+import threading
+import time as _time
+
+_BATCH_LOCK = threading.Lock()
+
+
+def _batch_path():
+    return store.data_dir() / "batch.json"
+
+
+def batch_status() -> dict:
+    try:
+        st = json.loads(_batch_path().read_text())
+    except Exception:
+        return {"running": False}
+    if st.get("running") and _time.time() - float(st.get("updatedAt", 0)) > 600:
+        # thread died (restart mid-batch) — report honestly and clear
+        st["running"] = False
+        st["stale"] = True
+        _write_batch(st)
+    return st
+
+
+def _write_batch(st: dict) -> None:
+    st["updatedAt"] = _time.time()
+    p = _batch_path()
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(st))
+    tmp.replace(p)
+
+
+def _batch_worker(ids: list, titles: dict) -> None:
+    done = 0
+    failed = 0
+    for mid in ids:
+        _write_batch({"running": True, "total": len(ids), "done": done,
+                      "failed": failed, "current": titles.get(mid, "")})
+        try:
+            m = store.get_meeting(mid, with_transcript=False)
+            if m and not m.get("analysis"):     # still unanalyzed?
+                analyze_meeting(mid)
+        except Exception:
+            failed += 1
+        done += 1
+    _write_batch({"running": False, "total": len(ids), "done": done,
+                  "failed": failed, "finishedAt": _time.time()})
+
+
+def start_batch() -> dict:
+    with _BATCH_LOCK:
+        st = batch_status()
+        if st.get("running"):
+            raise RuntimeError("an Analyze-all run is already in progress")
+        todo = [m for m in store.list_meetings() if not m.get("analysis")
+                and ((m.get("transcript") is not None) or True)]
+        # only meetings with content can be analyzed; filter via detail fetch
+        ids = []
+        titles = {}
+        for m in todo:
+            full = store.get_meeting(m["id"], with_transcript=True)
+            if full and ((full.get("transcript") or "").strip()
+                         or (full.get("providerSummary") or "").strip()):
+                ids.append(m["id"])
+                titles[m["id"]] = m["title"]
+        if not ids:
+            raise RuntimeError("nothing to analyze — every meeting with a "
+                               "transcript is already done")
+        _write_batch({"running": True, "total": len(ids), "done": 0,
+                      "failed": 0, "current": titles[ids[0]],
+                      "startedAt": _time.time()})
+        t = threading.Thread(target=_batch_worker, args=(ids, titles),
+                             daemon=True)
+        t.start()
+        return {"started": True, "total": len(ids)}

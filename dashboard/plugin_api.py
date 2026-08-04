@@ -61,6 +61,7 @@ class ImportBody(BaseModel):
 
 class AnalyzeBody(BaseModel):
     meetingId: int = 0
+    feedback: str = ""
 
 
 class SyncBody(BaseModel):
@@ -76,6 +77,7 @@ def _public_state() -> dict:
             for m in meetings
         ],
         "dashboard": analysis.dashboard_rollup(meetings),
+        "batch": analysis.batch_status(),
     }
 
 
@@ -136,12 +138,21 @@ def analyze(body: AnalyzeBody):
     if not body.meetingId:
         raise HTTPException(status_code=400, detail="meetingId required")
     try:
-        result = analysis.analyze_meeting(body.meetingId)
+        result = analysis.analyze_meeting(body.meetingId, body.feedback or "")
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return {"ok": True, "analysis": result, "state": _public_state()}
+
+
+@router.post("/analyze-all")
+def analyze_all():
+    try:
+        out = analysis.start_batch()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {**out, "state": _public_state()}
 
 
 @router.get("/meeting/{meeting_id}")

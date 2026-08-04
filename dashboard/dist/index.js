@@ -415,22 +415,30 @@
     }
 
     function analyzeAll() {
-      var todo = props.meetings.filter(function (m) { return !m.hasAnalysis; })
-        .map(function (m) { return m.id; });
-      if (!todo.length) return;
-      setBusy("all"); setNotice("Analyzing " + todo.length + " meeting(s)…");
-      var chain = Promise.resolve();
-      todo.forEach(function (id) {
-        chain = chain.then(function () {
-          return postJSON("/analyze", { meetingId: id })
-            .then(function (r) { props.onState(r.state); })
-            .catch(function () { /* keep going */ });
-        });
-      });
-      chain.finally(function () { setBusy(null); setNotice("Done."); });
+      setBusy("all"); setNotice(null);
+      postJSON("/analyze-all", {})
+        .then(function (r) { props.onState(r.state); })
+        .catch(function (e) { setNotice(String((e && e.message) || e)); })
+        .finally(function () { setBusy(null); });
+    }
+
+    var redoSt = useState(null);          // meeting being redone
+    var redoFor = redoSt[0], setRedoFor = redoSt[1];
+    var fbSt = useState("");
+    var feedbackText = fbSt[0], setFeedbackText = fbSt[1];
+
+    function redo() {
+      var id = redoFor.id;
+      setBusy(id); setRedoFor(null);
+      postJSON("/analyze", { meetingId: id, feedback: feedbackText })
+        .then(function (r) { props.onState(r.state); setExpanded(id); })
+        .catch(function (e) { setNotice(String((e && e.message) || e)); })
+        .finally(function () { setBusy(null); setFeedbackText(""); });
     }
 
     var unanalyzed = props.meetings.filter(function (m) { return !m.hasAnalysis; }).length;
+    var batch = props.batch || {};
+    var batchRunning = !!batch.running;
 
     return h("div", null,
       h("div", { className: "dk-card", style: { display: "flex", gap: 10,
@@ -450,10 +458,21 @@
               "⟳ Sync"),
         h("button", { className: "dk-btn", disabled: busy !== null,
                       onClick: props.onImport }, "＋ Import transcript"),
-        unanalyzed > 0
+        unanalyzed > 0 && !batchRunning
           ? h("button", { className: "dk-btn", disabled: busy !== null,
                           onClick: analyzeAll },
-              busy === "all" ? "Analyzing…" : "✨ Analyze all (" + unanalyzed + ")")
+              busy === "all" ? "Starting…" : "✨ Analyze all (" + unanalyzed + ")")
+          : null,
+        batchRunning
+          ? h("span", { className: "dk-batch" },
+              h("span", { className: "dk-spin" }, "◐"),
+              " Analyzing " + ((batch.done || 0) + 1) + "/" + batch.total +
+              (batch.current ? " — " + batch.current : "") +
+              " · safe to leave or refresh")
+          : null,
+        !batchRunning && batch.finishedAt && (batch.failed || 0) > 0
+          ? h("span", { style: { color: "#f87171", fontSize: 12.5 } },
+              "Last run: " + batch.failed + " of " + batch.total + " failed — retry with ✨")
           : null,
         h("span", { style: { flex: 1 } }),
         notice ? h("span", { style: { color: MUTED, fontSize: 12.5 } }, notice) : null),
@@ -468,12 +487,21 @@
                 h("span", { className: "dk-chev" + (isOpen ? " dk-chev-open" : "") }, "▸"),
                 h("span", { style: { fontWeight: 700, flex: 1 } }, m.title),
                 m.analysis
-                  ? h("span", { className: "dk-chip", style: {
-                        color: sentimentColor(m.analysis.sentimentScore),
-                        borderColor: sentimentColor(m.analysis.sentimentScore) } },
-                      Number(m.analysis.satisfactionScore).toFixed(0) + "/10")
+                  ? h(React.Fragment, null,
+                      h("span", { className: "dk-chip", style: {
+                          color: sentimentColor(m.analysis.sentimentScore),
+                          borderColor: sentimentColor(m.analysis.sentimentScore) } },
+                        Number(m.analysis.satisfactionScore).toFixed(0) + "/10"),
+                      h("button", { className: "dk-btn", style: { fontSize: 12 },
+                          disabled: busy !== null || batchRunning,
+                          title: "Re-analyze — optionally tell the analyst what to fix",
+                          onClick: function (e) {
+                            e.stopPropagation();
+                            setFeedbackText(""); setRedoFor(m);
+                          } },
+                        busy === m.id ? "Redoing…" : "↻ Redo"))
                   : h("button", { className: "dk-btn", style: { fontSize: 12 },
-                        disabled: busy !== null,
+                        disabled: busy !== null || batchRunning,
                         onClick: function (e) { e.stopPropagation(); analyzeOne(m.id); } },
                       busy === m.id ? "Analyzing…" : "✨ Analyze"),
                 h("span", { style: { color: MUTED, fontSize: 12 } },
@@ -485,7 +513,29 @@
                 ? h("div", { style: { color: MUTED, fontSize: 13, marginTop: 6 } },
                     "Not analyzed yet — hit ✨ Analyze.")
                 : null);
-          }));
+          }),
+      redoFor
+        ? h("div", { className: "dk-modal", onClick: function (e) {
+              if (e.target === e.currentTarget) setRedoFor(null);
+            } },
+            h("div", { className: "dk-modal-box" },
+              h("div", { style: { fontWeight: 800, fontSize: 15, marginBottom: 6 } },
+                "Re-analyze: " + redoFor.title),
+              h("div", { style: { color: MUTED, fontSize: 12.5, marginBottom: 10 } },
+                "Optional — tell the analyst what to fix or focus on. Leave " +
+                "blank for a fresh pass."),
+              h("textarea", {
+                className: "dk-input", rows: 3, autoFocus: true,
+                placeholder: "e.g. the satisfaction score felt too high — weigh the pricing pushback more",
+                value: feedbackText,
+                onChange: function (e) { setFeedbackText(e.target.value); },
+              }),
+              h("div", { className: "dk-modal-row" },
+                h("button", { className: "dk-btn",
+                              onClick: function () { setRedoFor(null); } }, "Cancel"),
+                h("button", { className: "dk-btn dk-btn-primary", onClick: redo },
+                  "↻ Re-analyze"))))
+        : null);
   }
 
   // -------------------------------------------------------------------------
@@ -554,6 +604,12 @@
         .catch(function (e) { setErr(String((e && e.message) || e)); });
     }, []);
     useEffect(function () { refresh(); }, [refresh]);
+    var batchRunning = !!(st && st.batch && st.batch.running);
+    useEffect(function () {
+      if (!batchRunning) return undefined;
+      var id = window.setInterval(refresh, 5000);
+      return function () { window.clearInterval(id); };
+    }, [refresh, batchRunning]);
 
     if (!st) {
       return h("div", { className: "dk-page" },
@@ -582,6 +638,7 @@
         tab === "dashboard"
           ? h(DashboardTab, { dashboard: st.dashboard })
           : h(MeetingsTab, { meetings: st.meetings, providers: st.providers,
+                             batch: st.batch,
                              onState: setSt,
                              onImport: function () { setShowImport(true); } }),
         showImport
