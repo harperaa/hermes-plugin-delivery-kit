@@ -188,6 +188,24 @@
     return "#ef4444";
   }
 
+  // Continuous scale: t in [0,1] -> red (0) through amber to green (1),
+  // with every shade between.
+  function scaleColor(t) {
+    t = Math.max(0, Math.min(1, t));
+    return "hsl(" + Math.round(t * 120) + ", 72%, 46%)";
+  }
+  function sentimentPct(score) {          // -1..1 -> 0..100
+    return Math.round(((Number(score) + 1) / 2) * 100);
+  }
+  function sentimentFace(score) {
+    var v = Number(score);
+    if (v > 0.6) return "😄";
+    if (v > 0.2) return "🙂";
+    if (v > -0.2) return "😐";
+    if (v > -0.6) return "🙁";
+    return "😠";
+  }
+
   // -------------------------------------------------------------------------
   // Connect bar — provider buttons at the top; modal stores the key inline
   // -------------------------------------------------------------------------
@@ -383,10 +401,13 @@
     return h("div", { className: "dk-analysis" },
       h("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 6 } },
         h("span", { className: "dk-chip",
-                    style: { color: sentimentColor(a.sentimentScore),
-                             borderColor: sentimentColor(a.sentimentScore) } },
-          "sentiment " + a.sentimentLabel + " (" + Number(a.sentimentScore).toFixed(2) + ")"),
-        h("span", { className: "dk-chip" },
+                    style: { color: scaleColor(sentimentPct(a.sentimentScore) / 100),
+                             borderColor: scaleColor(sentimentPct(a.sentimentScore) / 100) } },
+          sentimentFace(a.sentimentScore) + " sentiment " + a.sentimentLabel +
+          " · " + sentimentPct(a.sentimentScore) + "%"),
+        h("span", { className: "dk-chip",
+                    style: { color: scaleColor(Number(a.satisfactionScore) / 10),
+                             borderColor: scaleColor(Number(a.satisfactionScore) / 10) } },
           "satisfaction " + Number(a.satisfactionScore).toFixed(0) + "/10")),
       h("p", { style: { margin: "6px 0", fontSize: 13.5 } }, a.overview),
       h("p", { style: { margin: "6px 0", fontSize: 12.5, color: MUTED } },
@@ -620,9 +641,17 @@
                 h("span", { style: { fontWeight: 700, flex: 1 } }, m.title),
                 m.analysis
                   ? h(React.Fragment, null,
-                      h("span", { className: "dk-chip", style: {
-                          color: sentimentColor(m.analysis.sentimentScore),
-                          borderColor: sentimentColor(m.analysis.sentimentScore) } },
+                      h("span", { className: "dk-chip", title: "Client sentiment " +
+                            sentimentPct(m.analysis.sentimentScore) + "%",
+                          style: {
+                            color: scaleColor(sentimentPct(m.analysis.sentimentScore) / 100),
+                            borderColor: scaleColor(sentimentPct(m.analysis.sentimentScore) / 100) } },
+                        sentimentFace(m.analysis.sentimentScore) + " " +
+                        sentimentPct(m.analysis.sentimentScore) + "%"),
+                      h("span", { className: "dk-chip", title: "Client satisfaction",
+                          style: {
+                            color: scaleColor(Number(m.analysis.satisfactionScore) / 10),
+                            borderColor: scaleColor(Number(m.analysis.satisfactionScore) / 10) } },
                         Number(m.analysis.satisfactionScore).toFixed(0) + "/10"),
                       h("button", { className: "dk-btn", style: { fontSize: 12 },
                           disabled: busy !== null || batchRunning,
