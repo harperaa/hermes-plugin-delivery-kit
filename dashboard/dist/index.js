@@ -194,8 +194,11 @@
   //   80-100 greens, light -> dark
   function scaleColor(t) {
     t = Math.max(0, Math.min(1, t));
+    if (t < 0.5) {
+      return "hsl(0, 78%, 46%)";                  // below 50: red, full stop
+    }
     if (t < 0.6) {
-      var h0 = (t / 0.6) * 30;                    // 0 red -> 30 orange
+      var h0 = ((t - 0.5) / 0.1) * 30;            // 50-60: red -> orange
       return "hsl(" + Math.round(h0) + ", 78%, 46%)";
     }
     if (t < 0.8) {
