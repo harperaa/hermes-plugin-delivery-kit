@@ -583,6 +583,108 @@
       list("Risks", a.risks));
   }
 
+  function fmtHour(hh) {
+    hh = Number(hh) || 0;
+    if (hh === 0) return "12 AM";
+    if (hh < 12) return hh + " AM";
+    if (hh === 12) return "12 PM";
+    return (hh - 12) + " PM";
+  }
+  var FREQS = [[30, "every 30 min"], [60, "hourly"], [120, "every 2 hours"],
+               [180, "every 3 hours"], [240, "every 4 hours"]];
+  function freqLabel(mins) {
+    mins = Number(mins) || 60;
+    if (mins === 30) return "every 30m";
+    if (mins === 60) return "hourly";
+    return "every " + (mins / 60) + "h";
+  }
+
+  function AutosyncModal(props) {
+    var a = props.autosync || {};
+    var enSt = useState(a.enabled !== false);
+    var en = enSt[0], setEn = enSt[1];
+    var freqSt = useState(a.frequencyMinutes || 60);
+    var freq = freqSt[0], setFreq = freqSt[1];
+    var startSt = useState(a.startHour == null ? 8 : a.startHour);
+    var start = startSt[0], setStart = startSt[1];
+    var endSt = useState(a.endHour == null ? 19 : a.endHour);
+    var end = endSt[0], setEnd = endSt[1];
+    var busySt = useState(false);
+    var busy = busySt[0], setBusy = busySt[1];
+    var errSt = useState(null);
+    var err = errSt[0], setErr = errSt[1];
+
+    function save() {
+      setBusy(true); setErr(null);
+      postJSON("/autosync", {
+        enabled: en,
+        frequencyMinutes: Number(freq),
+        startHour: Number(start),
+        endHour: Number(end),
+        tzOffsetMinutes: new Date().getTimezoneOffset(),
+      })
+        .then(function () { return api("/state"); })
+        .then(function (d) { props.onState(d); props.onClose(); })
+        .catch(function (e) { setErr(String((e && e.message) || e)); })
+        .finally(function () { setBusy(false); });
+    }
+
+    function hourSelect(value, setter) {
+      var opts = [];
+      for (var hh = 0; hh < 24; hh++) {
+        opts.push(h("option", { key: hh, value: hh }, fmtHour(hh)));
+      }
+      return h("select", {
+        className: "dk-input", style: { width: "auto" }, value: value,
+        onChange: function (e) { setter(Number(e.target.value)); },
+      }, opts);
+    }
+
+    var swapped = Number(end) < Number(start);
+    return h("div", { className: "dk-modal", onClick: function (e) {
+          if (e.target === e.currentTarget) props.onClose();
+        } },
+      h("div", { className: "dk-modal-box" },
+        h("div", { style: { fontWeight: 800, fontSize: 15, marginBottom: 6 } },
+          "⏰ Auto-sync schedule"),
+        h("div", { style: { color: MUTED, fontSize: 12.5, marginBottom: 12 } },
+          "Pulls new transcripts from every connected provider on a schedule, " +
+          "in your timezone. No LLM cost — analysis stays manual."),
+        h("div", { style: { display: "flex", alignItems: "center", gap: 10,
+                            marginBottom: 12 } },
+          h("button", {
+              className: "dk-tab" + (en ? " dk-tab-on" : ""),
+              onClick: function () { setEn(!en); },
+            }, en ? "● Enabled" : "○ Disabled")),
+        h("div", { style: { display: "flex", alignItems: "center", gap: 8,
+                            flexWrap: "wrap", marginBottom: 10 } },
+          h("span", { style: { fontSize: 13, fontWeight: 700 } }, "Frequency"),
+          h("select", {
+              className: "dk-input", style: { width: "auto" }, value: freq,
+              onChange: function (e) { setFreq(Number(e.target.value)); },
+            },
+            FREQS.map(function (f) {
+              return h("option", { key: f[0], value: f[0] }, f[1]);
+            }))),
+        h("div", { style: { display: "flex", alignItems: "center", gap: 8,
+                            flexWrap: "wrap" } },
+          h("span", { style: { fontSize: 13, fontWeight: 700 } }, "Between"),
+          hourSelect(start, setStart),
+          h("span", { style: { color: MUTED } }, "and"),
+          hourSelect(end, setEnd),
+          h("span", { style: { color: MUTED, fontSize: 12 } }, "your time")),
+        swapped
+          ? h("div", { style: { color: MUTED, fontSize: 12, marginTop: 8 } },
+              "End is before start — the window will be treated as " +
+              fmtHour(end) + "–" + fmtHour(start) + ".")
+          : null,
+        err ? h("div", { className: "dk-err" }, err) : null,
+        h("div", { className: "dk-modal-row" },
+          h("button", { className: "dk-btn", onClick: props.onClose }, "Cancel"),
+          h("button", { className: "dk-btn dk-btn-primary", disabled: busy,
+                        onClick: save }, busy ? "Saving…" : "Save"))));
+  }
+
   function SyncBar(props) {
     var busySt = useState(null);
     var busy = busySt[0], setBusy = busySt[1];
@@ -621,13 +723,8 @@
     }
 
     var auto = props.autosync || {};
-    function toggleAutosync() {
-      postJSON("/autosync", { enabled: !auto.enabled,
-                              tzOffsetMinutes: new Date().getTimezoneOffset() })
-        .then(function () { return api("/state"); })
-        .then(props.onState)
-        .catch(function (e) { setNotice(String((e && e.message) || e)); });
-    }
+    var autoOpenSt = useState(false);
+    var autoOpen = autoOpenSt[0], setAutoOpen = autoOpenSt[1];
 
     var unanalyzed = (props.meetings || []).filter(function (m) {
       return !m.hasAnalysis;
@@ -684,14 +781,21 @@
       h("button", {
           className: "dk-tab" + (auto.enabled ? " dk-tab-on" : ""),
           style: { fontSize: 12 },
-          title: "Auto-syncs connected providers every hour, " +
-            "8:00 AM–7:00 PM in your timezone" +
+          title: "Auto-sync settings — schedule, time range, frequency" +
             (auto.lastRun
               ? " · last run " + new Date(auto.lastRun * 1000).toLocaleString()
               : ""),
-          onClick: toggleAutosync,
-        }, "⏰ Hourly sync " + (auto.enabled ? "on" : "off")),
-      notice ? h("span", { style: { color: MUTED, fontSize: 12.5 } }, notice) : null);
+          onClick: function () { setAutoOpen(true); },
+        }, "⏰ Auto-sync " + (auto.enabled
+          ? freqLabel(auto.frequencyMinutes) + " · " +
+            fmtHour(auto.startHour == null ? 8 : auto.startHour) + "–" +
+            fmtHour(auto.endHour == null ? 19 : auto.endHour)
+          : "off")),
+      notice ? h("span", { style: { color: MUTED, fontSize: 12.5 } }, notice) : null,
+      autoOpen
+        ? h(AutosyncModal, { autosync: auto, onState: props.onState,
+                             onClose: function () { setAutoOpen(false); } })
+        : null);
   }
 
   function MeetingsTab(props) {

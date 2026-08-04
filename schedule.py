@@ -19,7 +19,10 @@ logger = logging.getLogger(__name__)
 
 SYNC_JOB_NAME = "delivery-kit-sync"
 SCRIPT_NAME = "delivery-kit-sync.py"
-LOCAL_HOURS = list(range(8, 20))     # hourly, 08:00 through 19:00 inclusive
+DEFAULT_START_HOUR = 8               # window defaults: 08:00-19:00 inclusive,
+DEFAULT_END_HOUR = 19                # user-local
+DEFAULT_FREQ_MINUTES = 60
+FREQ_CHOICES = (30, 60, 120, 180, 240)
 
 
 def _home() -> Path:
@@ -43,22 +46,39 @@ def save_settings(s: dict) -> None:
     p.write_text(json.dumps(s, indent=2))
 
 
-def _cron_expr(tz_offset_minutes: int) -> str:
-    """User-local hourly window -> container-TZ cron expr.
+def _cron_expr(tz_offset_minutes: int,
+               start_hour: int = DEFAULT_START_HOUR,
+               end_hour: int = DEFAULT_END_HOUR,
+               freq_minutes: int = DEFAULT_FREQ_MINUTES) -> str:
+    """User-local sync window + frequency -> container-TZ cron expr.
 
     tz_offset_minutes is JS getTimezoneOffset(): minutes to ADD to local
     time to get UTC (240 for EDT, -330 for IST). Containers run UTC
     (Railway); the stored offset keeps the window on the user's clock.
+    Window is start..end inclusive in the user's local clock; freq_minutes
+    picks the cadence within it (30 = twice hourly, 120 = every other hour).
+    Minute x hour lists are a cross product, so a non-hour-aligned offset
+    with freq<60 can add near-boundary runs — harmless for a sync job.
     """
     off = int(tz_offset_minutes)
-    minute = 0
-    hours = []
-    for hh in LOCAL_HOURS:
-        total = (hh * 60 + off) % (24 * 60)
-        minute = total % 60           # constant across hours for a fixed offset
-        hours.append(total // 60)
-    hour_part = ",".join(str(h) for h in sorted(set(hours)))
-    return f"{minute} {hour_part} * * *"
+    start = min(23, max(0, int(start_hour)))
+    end = min(23, max(0, int(end_hour)))
+    if end < start:
+        start, end = end, start
+    freq = int(freq_minutes) if int(freq_minutes) in FREQ_CHOICES \
+        else DEFAULT_FREQ_MINUTES
+    hour_step = max(1, freq // 60)
+    minute_marks = range(0, 60, freq) if freq < 60 else (0,)
+
+    minutes, hours = set(), set()
+    for hh in range(start, end + 1, hour_step):
+        for mm in minute_marks:
+            total = (hh * 60 + mm + off) % (24 * 60)
+            minutes.add(total % 60)
+            hours.add(total // 60)
+    minute_part = ",".join(str(m) for m in sorted(minutes))
+    hour_part = ",".join(str(h) for h in sorted(hours))
+    return f"{minute_part} {hour_part} * * *"
 
 
 _SCRIPT_TEMPLATE = '''#!/usr/bin/env python3
@@ -137,14 +157,20 @@ def autosync_status() -> dict:
         "enabled": bool(s.get("enabled", True)),
         "configured": "cronJobId" in s,
         "tzOffsetMinutes": s.get("tzOffsetMinutes"),
+        "startHour": int(s.get("startHour", DEFAULT_START_HOUR)),
+        "endHour": int(s.get("endHour", DEFAULT_END_HOUR)),
+        "frequencyMinutes": int(s.get("frequencyMinutes", DEFAULT_FREQ_MINUTES)),
         "lastRun": s.get("lastRun"),
         "results": s.get("results"),
     }
 
 
 def ensure_sync_job(tz_offset_minutes: Optional[int] = None,
-                    enabled: Optional[bool] = None) -> dict:
-    """Create or update the hourly sync job to match settings."""
+                    enabled: Optional[bool] = None,
+                    start_hour: Optional[int] = None,
+                    end_hour: Optional[int] = None,
+                    frequency_minutes: Optional[int] = None) -> dict:
+    """Create or update the scheduled sync job to match settings."""
     from cron import jobs as cron_jobs
 
     s = load_settings()
@@ -152,11 +178,21 @@ def ensure_sync_job(tz_offset_minutes: Optional[int] = None,
         s["tzOffsetMinutes"] = int(tz_offset_minutes)
     if enabled is not None:
         s["enabled"] = bool(enabled)
+    if start_hour is not None:
+        s["startHour"] = min(23, max(0, int(start_hour)))
+    if end_hour is not None:
+        s["endHour"] = min(23, max(0, int(end_hour)))
+    if frequency_minutes is not None and int(frequency_minutes) in FREQ_CHOICES:
+        s["frequencyMinutes"] = int(frequency_minutes)
     s.setdefault("enabled", True)
     s.setdefault("tzOffsetMinutes", 0)
+    s.setdefault("startHour", DEFAULT_START_HOUR)
+    s.setdefault("endHour", DEFAULT_END_HOUR)
+    s.setdefault("frequencyMinutes", DEFAULT_FREQ_MINUTES)
 
     _write_script()
-    expr = _cron_expr(s["tzOffsetMinutes"])
+    expr = _cron_expr(s["tzOffsetMinutes"], s["startHour"], s["endHour"],
+                      s["frequencyMinutes"])
 
     job = None
     if s.get("cronJobId"):

@@ -440,6 +440,20 @@ def test_autosync_cron_expr_maps_local_window_to_utc():
         "30 " + ",".join(str(h) for h in range(2, 14)) + " * * *"
 
 
+def test_autosync_cron_expr_range_and_frequency():
+    # custom window 9-17 UTC-user, every 2 hours -> 9,11,13,15,17
+    assert schedule._cron_expr(0, 9, 17, 120) == "0 9,11,13,15,17 * * *"
+    # every 30 minutes -> minute list 0,30 across the window
+    assert schedule._cron_expr(0, 8, 9, 30) == "0,30 8,9 * * *"
+    # swapped bounds normalize
+    assert schedule._cron_expr(0, 17, 9, 120) == \
+        schedule._cron_expr(0, 9, 17, 120)
+    # bogus frequency falls back to hourly
+    assert schedule._cron_expr(0, 8, 10, 45) == "0 8,9,10 * * *"
+    # EDT window shift applies to stepped hours too
+    assert schedule._cron_expr(240, 8, 12, 240) == "0 12,16 * * *"
+
+
 def test_autosync_ensure_creates_and_updates_job(home, monkeypatch):
     import types
     created, updated = [], []
@@ -490,3 +504,13 @@ def test_autosync_ensure_creates_and_updates_job(home, monkeypatch):
     assert info2["enabled"] is False
     # tz offset survives the toggle
     assert schedule.load_settings()["tzOffsetMinutes"] == 240
+
+    # range + frequency flow through to the schedule and persist
+    info3 = schedule.ensure_sync_job(enabled=True, start_hour=9,
+                                     end_hour=17, frequency_minutes=120)
+    assert info3["startHour"] == 9 and info3["endHour"] == 17
+    assert info3["frequencyMinutes"] == 120
+    assert info3["schedule"] == schedule._cron_expr(240, 9, 17, 120)
+    # invalid frequency ignored, keeps stored value
+    info4 = schedule.ensure_sync_job(frequency_minutes=45)
+    assert info4["frequencyMinutes"] == 120

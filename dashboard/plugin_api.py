@@ -72,6 +72,9 @@ class SyncBody(BaseModel):
 class AutosyncBody(BaseModel):
     tzOffsetMinutes: int | None = None
     enabled: bool | None = None
+    startHour: int | None = None
+    endHour: int | None = None
+    frequencyMinutes: int | None = None
 
 
 def _public_state() -> dict:
@@ -137,7 +140,9 @@ def autosync(body: AutosyncBody):
     window tracks the user's clock; the toggle sends `enabled`.
     """
     try:
-        info = schedule.ensure_sync_job(body.tzOffsetMinutes, body.enabled)
+        info = schedule.ensure_sync_job(
+            body.tzOffsetMinutes, body.enabled,
+            body.startHour, body.endHour, body.frequencyMinutes)
     except Exception as exc:
         raise HTTPException(status_code=500,
                             detail=f"auto-sync setup failed: {exc}")
