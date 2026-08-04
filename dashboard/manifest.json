@@ -1,0 +1,14 @@
+{
+  "name": "delivery-kit",
+  "label": "Delivery Kit",
+  "description": "The Deliver-phase workbench — meeting analysis with sentiment, client satisfaction, and lessons learned rolled into one delivery dashboard",
+  "icon": "Package",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/delivery",
+    "position": "after:kanban"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

@@ -1,0 +1,150 @@
+/* Delivery Kit — theme-variable driven so every hermes theme works. */
+
+.dk-page { min-height: 100%; color: currentColor; position: relative; z-index: 1; }
+.dk-inner { padding: 28px 24px 48px; max-width: 1020px; margin: 0 auto; }
+
+.dk-card {
+  background: var(--color-card, #16162a);
+  border: 1px solid var(--color-border, #2b2b44);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+
+/* ---- connect bar ---- */
+.dk-connectbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.dk-provider {
+  border: 1px solid var(--color-border, #2b2b44);
+  background: var(--color-card, #16162a); color: inherit;
+  border-radius: 999px; padding: 5px 14px;
+  font-size: 12.5px; font-weight: 700; cursor: pointer;
+}
+.dk-provider:hover { border-color: var(--color-primary, #14b8a6); }
+.dk-provider-on {
+  border-color: color-mix(in srgb, var(--color-primary, #14b8a6) 60%, transparent);
+  color: var(--color-primary, #14b8a6);
+  background: color-mix(in srgb, var(--color-primary, #14b8a6) 10%, transparent);
+}
+.dk-provider-default { font-weight: 800; }
+
+/* ---- modal ---- */
+.dk-modal {
+  position: fixed; inset: 0; z-index: 80;
+  background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(3px);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.dk-modal-box {
+  max-width: 460px; width: 100%;
+  background: var(--color-card, #16162a);
+  border: 1px solid color-mix(in srgb, var(--color-primary, #14b8a6) 40%, transparent);
+  border-radius: 14px; padding: 20px 22px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+  max-height: 90vh; overflow-y: auto;
+}
+.dk-modal-row { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
+.dk-instructions {
+  background: var(--color-secondary, #13131f);
+  border-radius: 8px; padding: 10px 12px;
+  font-size: 12.5px; line-height: 1.6; white-space: pre-wrap;
+  font-family: inherit; margin: 0 0 10px;
+}
+.dk-link {
+  color: var(--color-primary, #14b8a6);
+  text-decoration: underline; text-underline-offset: 3px; font-weight: 700;
+  font-size: 13px;
+}
+
+/* ---- inputs & buttons ---- */
+.dk-input {
+  width: 100%; box-sizing: border-box;
+  background: var(--color-input, #0f0f1c); color: inherit;
+  border: 1px solid var(--color-border, #2b2b44);
+  border-radius: 8px; padding: 8px 10px;
+  font-size: 13.5px; font-family: inherit; resize: vertical;
+}
+.dk-input:focus { outline: none; border-color: var(--color-primary, #14b8a6); }
+.dk-btn {
+  border: 1px solid var(--color-border, #2b2b44);
+  background: transparent; color: inherit;
+  border-radius: 8px; padding: 6px 14px;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.dk-btn:hover { border-color: var(--color-primary, #14b8a6); }
+.dk-btn:disabled { opacity: 0.5; cursor: default; }
+.dk-btn-primary {
+  border: none;
+  color: var(--color-primary-foreground, #04211c);
+  background: var(--color-primary, #14b8a6);
+}
+.dk-err { color: #f87171; font-size: 12.5px; margin-top: 8px; }
+
+/* ---- tabs ---- */
+.dk-tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+.dk-tab {
+  border: 1px solid var(--color-border, #2b2b44);
+  background: transparent; color: inherit;
+  border-radius: 999px; padding: 6px 16px;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.dk-tab-on {
+  border-color: var(--color-primary, #14b8a6);
+  color: var(--color-primary, #14b8a6);
+  background: color-mix(in srgb, var(--color-primary, #14b8a6) 10%, transparent);
+}
+
+/* ---- dashboard ---- */
+.dk-stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px; margin-bottom: 14px;
+}
+.dk-stat {
+  background: var(--color-card, #16162a);
+  border: 1px solid var(--color-border, #2b2b44);
+  border-radius: 12px; padding: 12px 16px;
+}
+.dk-stat-n { font-size: 22px; font-weight: 800; }
+.dk-stat-l { font-size: 11.5px; color: var(--color-muted-foreground, #9aa0b4);
+             margin-top: 2px; }
+.dk-stat-s { font-size: 11px; color: var(--color-muted-foreground, #9aa0b4); }
+.dk-trend { width: 100%; height: auto; display: block; }
+
+.dk-list { margin: 0; padding-left: 18px; font-size: 13.5px; line-height: 1.6; }
+.dk-list li { margin-bottom: 5px; }
+.dk-attrib { color: var(--color-muted-foreground, #9aa0b4); font-size: 12px; }
+.dk-risks li { color: #f59e0b; }
+.dk-risks li .dk-attrib { color: var(--color-muted-foreground, #9aa0b4); }
+
+/* ---- meetings ---- */
+.dk-meeting { padding: 12px 16px; }
+.dk-meeting-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  cursor: pointer; user-select: none;
+}
+.dk-chev { display: inline-block; font-size: 11px; transition: transform 0.12s ease;
+           color: var(--color-muted-foreground, #9aa0b4); }
+.dk-chev-open { transform: rotate(90deg); }
+.dk-chip {
+  border: 1px solid var(--color-border, #2b2b44);
+  border-radius: 999px; padding: 2px 10px;
+  font-size: 11.5px; font-weight: 700;
+}
+.dk-analysis { margin-top: 10px; border-top: 1px solid var(--color-border, #2b2b44);
+               padding-top: 10px; }
+
+/* ---- ambient FX layers (standalone installs; acvc's engine owns these
+   visuals when both plugins are present) ---- */
+.dk-ambient-tint {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(ellipse 80% 55% at 50% -10%,
+      color-mix(in srgb, var(--color-primary, #14b8a6) 13%, transparent), transparent),
+    radial-gradient(ellipse 60% 45% at 85% 110%,
+      color-mix(in srgb, var(--color-primary, #14b8a6) 9%, transparent), transparent);
+}
+.dk-ambient-canvas {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  width: 100vw; height: 100vh;
+}

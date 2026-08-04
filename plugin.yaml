@@ -1,0 +1,19 @@
+name: delivery-kit
+version: 1.0.0
+description: >
+  Delivery Kit — the Deliver-phase workbench. Meeting Analysis pulls client
+  meeting transcripts (Fireflies.ai by default; Fathom, Grain, tl;dv, Zoom,
+  or manual import), extracts insights with the host LLM, and rolls sentiment,
+  client satisfaction, and lessons learned into one delivery dashboard.
+author: Allen Harper
+kind: standalone
+manifest_version: 1
+
+requires_env:
+  - name: FIREFLIES_API_KEY
+    description: "Fireflies.ai API key (Settings → Developer Settings) — default meeting-transcript source for Delivery Kit"
+    url: "https://app.fireflies.ai/settings"
+    secret: true
+
+provides_tools:
+  - meeting_search

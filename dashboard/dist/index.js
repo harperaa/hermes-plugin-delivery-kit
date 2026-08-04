@@ -1,0 +1,583 @@
+/**
+ * Delivery Kit — Hermes Dashboard Plugin
+ *
+ * Meeting Analysis: connect Fireflies.ai (default) or import transcripts
+ * from any tool, analyze each meeting with the host LLM, and roll insights,
+ * sentiment, client satisfaction, and lessons learned into one delivery
+ * dashboard. Connect buttons live at the top; each modal carries key
+ * instructions and stores the key straight into the env.
+ *
+ * Plain IIFE, no build step. window.__HERMES_PLUGIN_SDK__ for React.
+ */
+(function () {
+  "use strict";
+
+  var SDK = window.__HERMES_PLUGIN_SDK__;
+  if (!SDK || !window.__HERMES_PLUGINS__) return;
+
+  // -------------------------------------------------------------------------
+  // Ambient FX (standalone installs; yields when the acvc bundle is present)
+  // -------------------------------------------------------------------------
+  (function ambientBackground() {
+    var ROUTES = { "/delivery": 1 };
+    var canvas = null, tintEl = null, raf = 0, stars = null;
+    var pointer = { x: 0, y: 0 }, eased = { x: 0, y: 0 };
+    var theme = { r: 20, g: 184, b: 166 }, fore = { r: 230, g: 230, b: 240 };
+    var lightTheme = false, moteBase = 255, dpr = 1;
+    var probeCanvas = null;
+
+    function parseColor(col, fallback) {
+      if (!probeCanvas) { probeCanvas = document.createElement("canvas"); probeCanvas.width = probeCanvas.height = 1; }
+      var x = probeCanvas.getContext("2d", { willReadFrequently: true });
+      x.fillStyle = fallback; x.fillStyle = col;
+      x.clearRect(0, 0, 1, 1); x.fillRect(0, 0, 1, 1);
+      var d = x.getImageData(0, 0, 1, 1).data;
+      return { r: d[0], g: d[1], b: d[2] };
+    }
+    function resolveVar(name, fallback) {
+      var probe = document.createElement("span");
+      probe.style.color = "var(" + name + ", " + fallback + ")";
+      probe.style.display = "none";
+      document.body.appendChild(probe);
+      var col = getComputedStyle(probe).color;
+      probe.remove();
+      return parseColor(col, fallback);
+    }
+    function refreshPalette() {
+      theme = resolveVar("--color-primary", "#14b8a6");
+      fore = parseColor(getComputedStyle(document.body).color, "#e6e6f0");
+      var card = resolveVar("--color-card", "#16162a");
+      var lum = 0.2126 * card.r + 0.7152 * card.g + 0.0722 * card.b;
+      lightTheme = lum > 140;
+      moteBase = lightTheme ? 0 : 255;
+    }
+    function effectsOff() {
+      try { return localStorage.getItem("vcl-effects-off") === "1"; }
+      catch (e) { return false; }
+    }
+    function resize() {
+      if (!canvas) return;
+      dpr = window.devicePixelRatio || 1;
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+    }
+    function onMove(e) {
+      pointer.x = (e.clientX / window.innerWidth - 0.5) * 2;
+      pointer.y = (e.clientY / window.innerHeight - 0.5) * 2;
+    }
+    function frame(t) {
+      if (!canvas) return;
+      var ctx = canvas.getContext("2d");
+      var w = canvas.width, hgt = canvas.height;
+      if (effectsOff()) { ctx.clearRect(0, 0, w, hgt); raf = requestAnimationFrame(frame); return; }
+      eased.x += (pointer.x - eased.x) * 0.03;
+      eased.y += (pointer.y - eased.y) * 0.03;
+      ctx.clearRect(0, 0, w, hgt);
+      var lx = (0.5 + 0.34 * Math.sin(t * 0.000041)) * w;
+      var ly = (0.42 + 0.30 * Math.sin(t * 0.000029 + 1.7)) * hgt;
+      var lr = Math.max(w, hgt) * 0.42;
+      var glow = ctx.createRadialGradient(lx, ly, 0, lx, ly, lr);
+      glow.addColorStop(0, "rgba(" + theme.r + "," + theme.g + "," + theme.b + ",0.34)");
+      glow.addColorStop(0.55, "rgba(" + theme.r + "," + theme.g + "," + theme.b + ",0.13)");
+      glow.addColorStop(1, "rgba(" + theme.r + "," + theme.g + "," + theme.b + ",0)");
+      ctx.fillStyle = glow; ctx.fillRect(0, 0, w, hgt);
+      var l2x = (0.5 - 0.38 * Math.sin(t * 0.000033 + 0.6)) * w;
+      var l2y = (0.55 + 0.28 * Math.cos(t * 0.000047)) * hgt;
+      var g2 = ctx.createRadialGradient(l2x, l2y, 0, l2x, l2y, lr * 0.7);
+      g2.addColorStop(0, "rgba(" + fore.r + "," + fore.g + "," + fore.b + "," + (lightTheme ? 0.09 : 0.13) + ")");
+      g2.addColorStop(1, "rgba(" + fore.r + "," + fore.g + "," + fore.b + ",0)");
+      ctx.fillStyle = g2; ctx.fillRect(0, 0, w, hgt);
+      for (var i = 0; i < stars.length; i++) {
+        var st = stars[i];
+        st.x += 0.000012 * (0.3 + st.depth);
+        st.y -= 0.0000048 * (0.3 + st.depth);
+        if (st.x > 1.02) st.x = -0.02;
+        if (st.y < -0.02) st.y = 1.02;
+        var px = (st.x + eased.x * 0.012 * st.depth) * w;
+        var py = (st.y + eased.y * 0.012 * st.depth) * hgt;
+        var a = (0.10 + 0.16 * st.depth) *
+          (0.7 + 0.3 * Math.sin(t * 0.00045 * st.twinkle + st.phase));
+        var base = st.themed ? theme : fore;
+        var cr = Math.round(base.r * 0.45 + moteBase * 0.55);
+        var cg = Math.round(base.g * 0.45 + moteBase * 0.55);
+        var cb = Math.round(base.b * 0.45 + moteBase * 0.55);
+        ctx.beginPath();
+        ctx.fillStyle = "rgba(" + cr + "," + cg + "," + cb + "," + a + ")";
+        ctx.arc(px, py, (0.5 + st.depth * 0.9) * dpr, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      raf = requestAnimationFrame(frame);
+    }
+    function mount() {
+      if (canvas) return;
+      stars = [];
+      for (var i = 0; i < 140; i++) {
+        stars.push({ x: Math.random(), y: Math.random(),
+          depth: 0.35 + Math.random() * 0.65,
+          phase: Math.random() * Math.PI * 2,
+          twinkle: 0.4 + Math.random() * 0.8,
+          themed: Math.random() < 0.45 });
+      }
+      tintEl = document.createElement("div");
+      tintEl.className = "dk-ambient-tint";
+      canvas = document.createElement("canvas");
+      canvas.className = "dk-ambient-canvas";
+      canvas.style.opacity = "0.95";
+      document.body.appendChild(tintEl);
+      document.body.appendChild(canvas);
+      refreshPalette(); resize();
+      window.addEventListener("resize", resize);
+      window.addEventListener("mousemove", onMove);
+      raf = requestAnimationFrame(frame);
+    }
+    function unmount() {
+      if (!canvas) return;
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", resize);
+      window.removeEventListener("mousemove", onMove);
+      canvas.remove(); tintEl.remove();
+      canvas = null; tintEl = null;
+    }
+    function check() {
+      var acvcOwns = !!document.getElementById("acvc-sidebar-order");
+      if (ROUTES[window.location.pathname] && !acvcOwns) mount(); else unmount();
+    }
+    try {
+      new MutationObserver(function () { refreshPalette(); })
+        .observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
+    } catch (e) {}
+    setInterval(refreshPalette, 3000);
+    window.addEventListener("popstate", check);
+    setInterval(check, 800);
+    check();
+  })();
+
+  var React = SDK.React;
+  var h = React.createElement;
+  var hooks = SDK.hooks;
+  var useState = hooks.useState;
+  var useEffect = hooks.useEffect;
+  var useCallback = hooks.useCallback;
+
+  var API = "/api/plugins/delivery-kit";
+
+  function api(path, options) {
+    return SDK.fetchJSON(API + path, options);
+  }
+
+  function postJSON(path, body) {
+    return api(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+  }
+
+  var MUTED = "var(--color-muted-foreground, #9aa0b4)";
+
+  function fmtWhen(ts) {
+    if (!ts) return "";
+    return new Date(ts * 1000).toLocaleDateString(undefined,
+      { month: "short", day: "numeric", year: "numeric" });
+  }
+
+  function sentimentColor(score) {
+    if (score >= 0.35) return "#22c55e";
+    if (score >= 0) return "#eab308";
+    return "#ef4444";
+  }
+
+  // -------------------------------------------------------------------------
+  // Connect bar — provider buttons at the top; modal stores the key inline
+  // -------------------------------------------------------------------------
+  function ConnectBar(props) {
+    var openSt = useState(null);       // provider object or null
+    var open = openSt[0], setOpen = openSt[1];
+    var keySt = useState("");
+    var keyVal = keySt[0], setKeyVal = keySt[1];
+    var busySt = useState(false);
+    var busy = busySt[0], setBusy = busySt[1];
+    var errSt = useState(null);
+    var err = errSt[0], setErr = errSt[1];
+
+    function save() {
+      if (!keyVal.trim() || busy) return;
+      setBusy(true); setErr(null);
+      postJSON("/connect", { provider: open.id, apiKey: keyVal.trim() })
+        .then(function (r) {
+          props.onState(r.state);
+          setOpen(null); setKeyVal("");
+        })
+        .catch(function (e) { setErr(String((e && e.message) || e)); })
+        .finally(function () { setBusy(false); });
+    }
+
+    return h("div", null,
+      h("div", { className: "dk-connectbar" },
+        h("span", { style: { fontSize: 12.5, color: MUTED, fontWeight: 700 } }, "Connect:"),
+        props.providers.map(function (p) {
+          return h("button", {
+            key: p.id,
+            className: "dk-provider" + (p.connected ? " dk-provider-on" : "") +
+              (p.default ? " dk-provider-default" : ""),
+            title: p.connected ? p.label + " connected"
+              : "Connect " + p.label + " — instructions inside",
+            onClick: function () { setErr(null); setKeyVal(""); setOpen(p); },
+          }, (p.connected ? "✓ " : "") + p.label);
+        })),
+      open
+        ? h("div", { className: "dk-modal", onClick: function (e) {
+              if (e.target === e.currentTarget) setOpen(null);
+            } },
+            h("div", { className: "dk-modal-box" },
+              h("div", { style: { fontWeight: 800, fontSize: 15, marginBottom: 8 } },
+                "Connect " + open.label),
+              h("pre", { className: "dk-instructions" }, open.instructions),
+              h("a", { className: "dk-link", href: open.url, target: "_blank",
+                       rel: "noreferrer" }, "Open " + open.label + " ↗"),
+              open.env
+                ? h("div", { style: { marginTop: 12 } },
+                    h("input", {
+                      className: "dk-input", type: "password",
+                      placeholder: open.label + " API key",
+                      value: keyVal, autoFocus: true,
+                      onChange: function (e) { setKeyVal(e.target.value); },
+                      onKeyDown: function (e) { if (e.key === "Enter") save(); },
+                    }),
+                    err ? h("div", { className: "dk-err" }, err) : null,
+                    h("div", { className: "dk-modal-row" },
+                      h("button", { className: "dk-btn",
+                                    onClick: function () { setOpen(null); } }, "Cancel"),
+                      h("button", { className: "dk-btn dk-btn-primary",
+                                    disabled: busy || !keyVal.trim(),
+                                    onClick: save },
+                        busy ? "Saving…" : "Save key")))
+                : h("div", { className: "dk-modal-row", style: { marginTop: 12 } },
+                    h("button", { className: "dk-btn",
+                                  onClick: function () { setOpen(null); } }, "Close"),
+                    h("button", { className: "dk-btn dk-btn-primary",
+                                  onClick: function () { setOpen(null); props.onImport(); } },
+                      "Open Import"))))
+        : null);
+  }
+
+  // -------------------------------------------------------------------------
+  // Trend chart — satisfaction bars + sentiment line, inline SVG
+  // -------------------------------------------------------------------------
+  function TrendChart(props) {
+    var pts = props.trend || [];
+    if (pts.length < 2) return null;
+    var W = 640, H = 120, pad = 6;
+    var n = pts.length;
+    var bw = (W - pad * 2) / n;
+    var bars = pts.map(function (p, i) {
+      var bh = Math.max(2, (p.satisfaction / 10) * (H - pad * 2));
+      return h("rect", {
+        key: "b" + i,
+        x: pad + i * bw + bw * 0.15, y: H - pad - bh,
+        width: bw * 0.7, height: bh, rx: 2,
+        fill: "var(--color-primary, #14b8a6)", opacity: 0.35,
+      }, h("title", null, p.title + " — satisfaction " + p.satisfaction + "/10"));
+    });
+    var line = pts.map(function (p, i) {
+      var x = pad + i * bw + bw / 2;
+      var y = H / 2 - p.sentiment * (H / 2 - pad);
+      return (i === 0 ? "M" : "L") + x.toFixed(1) + "," + y.toFixed(1);
+    }).join(" ");
+    var dots = pts.map(function (p, i) {
+      var x = pad + i * bw + bw / 2;
+      var y = H / 2 - p.sentiment * (H / 2 - pad);
+      return h("circle", { key: "d" + i, cx: x, cy: y, r: 3,
+                           fill: sentimentColor(p.sentiment) },
+        h("title", null, p.title + " — sentiment " + p.sentiment.toFixed(2)));
+    });
+    return h("div", { className: "dk-card" },
+      h("div", { style: { fontWeight: 800, marginBottom: 6 } }, "📈 Delivery trend"),
+      h("div", { style: { color: MUTED, fontSize: 12, marginBottom: 8 } },
+        "bars = client satisfaction (0–10) · line = sentiment (−1…+1) · oldest → newest"),
+      h("svg", { viewBox: "0 0 " + W + " " + H, className: "dk-trend" },
+        h("line", { x1: pad, y1: H / 2, x2: W - pad, y2: H / 2,
+                    stroke: "currentColor", opacity: 0.15 }),
+        bars,
+        h("path", { d: line, fill: "none", stroke: "currentColor",
+                    strokeWidth: 1.5, opacity: 0.7 }),
+        dots));
+  }
+
+  // -------------------------------------------------------------------------
+  // Dashboard tab
+  // -------------------------------------------------------------------------
+  function DashboardTab(props) {
+    var d = props.dashboard || {};
+    if (!d.analyzed) {
+      return h("div", { className: "dk-card", style: { color: MUTED, fontSize: 13.5 } },
+        d.total
+          ? "Meetings are in — hit Analyze on the Meetings tab to build the dashboard."
+          : "No meetings yet. Connect Fireflies above and Sync, or Import a transcript.");
+    }
+    function stat(label, value, sub, color) {
+      return h("div", { className: "dk-stat" },
+        h("div", { className: "dk-stat-n", style: color ? { color: color } : null }, value),
+        h("div", { className: "dk-stat-l" }, label),
+        sub ? h("div", { className: "dk-stat-s" }, sub) : null);
+    }
+    function bucket(title, icon, items, cls) {
+      if (!items || !items.length) return null;
+      return h("div", { className: "dk-card" },
+        h("div", { style: { fontWeight: 800, marginBottom: 8 } }, icon + " " + title),
+        h("ul", { className: "dk-list " + (cls || "") },
+          items.map(function (it, i) {
+            return h("li", { key: i },
+              it.text,
+              h("span", { className: "dk-attrib" },
+                " — " + it.meeting + (it.heldAt ? " · " + fmtWhen(it.heldAt) : "")));
+          })));
+    }
+    return h("div", null,
+      h("div", { className: "dk-stats" },
+        stat("meetings analyzed", d.analyzed + " / " + d.total),
+        stat("avg satisfaction", d.avgSatisfaction.toFixed(1) + " / 10", null,
+          d.avgSatisfaction >= 7 ? "#22c55e" : d.avgSatisfaction >= 5 ? "#eab308" : "#ef4444"),
+        stat("avg sentiment", d.avgSentiment.toFixed(2),
+          d.avgSentiment >= 0.35 ? "positive" : d.avgSentiment >= 0 ? "neutral" : "negative",
+          sentimentColor(d.avgSentiment)),
+        stat("latest meeting", d.latestSatisfaction.toFixed(0) + " / 10",
+          "sentiment " + d.latestSentiment.toFixed(2),
+          sentimentColor(d.latestSentiment))),
+      h(TrendChart, { trend: d.trend }),
+      bucket("Risks heard", "⚠️", d.risks, "dk-risks"),
+      bucket("Lessons learned", "🎓", d.lessons),
+      bucket("Insights", "💡", d.insights));
+  }
+
+  // -------------------------------------------------------------------------
+  // Meetings tab
+  // -------------------------------------------------------------------------
+  function AnalysisView(props) {
+    var a = props.analysis;
+    function list(title, items) {
+      if (!items || !items.length) return null;
+      return h("div", { style: { marginTop: 8 } },
+        h("div", { style: { fontSize: 11.5, fontWeight: 700, color: MUTED,
+                            textTransform: "uppercase", letterSpacing: "0.06em" } }, title),
+        h("ul", { className: "dk-list" }, items.map(function (x, i) {
+          return h("li", { key: i }, x);
+        })));
+    }
+    return h("div", { className: "dk-analysis" },
+      h("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 6 } },
+        h("span", { className: "dk-chip",
+                    style: { color: sentimentColor(a.sentimentScore),
+                             borderColor: sentimentColor(a.sentimentScore) } },
+          "sentiment " + a.sentimentLabel + " (" + Number(a.sentimentScore).toFixed(2) + ")"),
+        h("span", { className: "dk-chip" },
+          "satisfaction " + Number(a.satisfactionScore).toFixed(0) + "/10")),
+      h("p", { style: { margin: "6px 0", fontSize: 13.5 } }, a.overview),
+      h("p", { style: { margin: "6px 0", fontSize: 12.5, color: MUTED } },
+        a.satisfactionRationale),
+      list("Insights", a.insights),
+      list("Lessons learned", a.lessons),
+      list("Action items", a.actionItems),
+      list("Risks", a.risks));
+  }
+
+  function MeetingsTab(props) {
+    var busySt = useState(null);      // meeting id being analyzed, or "sync"/"all"
+    var busy = busySt[0], setBusy = busySt[1];
+    var noticeSt = useState(null);
+    var notice = noticeSt[0], setNotice = noticeSt[1];
+    var expandSt = useState(null);
+    var expanded = expandSt[0], setExpanded = expandSt[1];
+
+    var ff = (props.providers || []).find(function (p) { return p.id === "fireflies"; });
+
+    function sync() {
+      setBusy("sync"); setNotice(null);
+      postJSON("/sync", {})
+        .then(function (r) {
+          props.onState(r.state);
+          setNotice("Synced " + r.fetched + " meeting(s), " + r.new + " new.");
+        })
+        .catch(function (e) { setNotice(String((e && e.message) || e)); })
+        .finally(function () { setBusy(null); });
+    }
+
+    function analyzeOne(id) {
+      setBusy(id); setNotice(null);
+      return postJSON("/analyze", { meetingId: id })
+        .then(function (r) { props.onState(r.state); setExpanded(id); })
+        .catch(function (e) { setNotice(String((e && e.message) || e)); })
+        .finally(function () { setBusy(null); });
+    }
+
+    function analyzeAll() {
+      var todo = props.meetings.filter(function (m) { return !m.hasAnalysis; })
+        .map(function (m) { return m.id; });
+      if (!todo.length) return;
+      setBusy("all"); setNotice("Analyzing " + todo.length + " meeting(s)…");
+      var chain = Promise.resolve();
+      todo.forEach(function (id) {
+        chain = chain.then(function () {
+          return postJSON("/analyze", { meetingId: id })
+            .then(function (r) { props.onState(r.state); })
+            .catch(function () { /* keep going */ });
+        });
+      });
+      chain.finally(function () { setBusy(null); setNotice("Done."); });
+    }
+
+    var unanalyzed = props.meetings.filter(function (m) { return !m.hasAnalysis; }).length;
+
+    return h("div", null,
+      h("div", { className: "dk-card", style: { display: "flex", gap: 10,
+                 alignItems: "center", flexWrap: "wrap" } },
+        h("button", { className: "dk-btn dk-btn-primary",
+                      disabled: busy !== null || !(ff && ff.connected),
+                      title: ff && ff.connected ? "Pull latest transcripts from Fireflies"
+                        : "Connect Fireflies first (button above)",
+                      onClick: sync },
+          busy === "sync" ? "Syncing…" : "⟳ Sync Fireflies"),
+        h("button", { className: "dk-btn", disabled: busy !== null,
+                      onClick: props.onImport }, "＋ Import transcript"),
+        unanalyzed > 0
+          ? h("button", { className: "dk-btn", disabled: busy !== null,
+                          onClick: analyzeAll },
+              busy === "all" ? "Analyzing…" : "✨ Analyze all (" + unanalyzed + ")")
+          : null,
+        h("span", { style: { flex: 1 } }),
+        notice ? h("span", { style: { color: MUTED, fontSize: 12.5 } }, notice) : null),
+      props.meetings.length === 0
+        ? h("div", { className: "dk-card", style: { color: MUTED, fontSize: 13.5 } },
+            "No meetings yet — Sync Fireflies or Import a transcript.")
+        : props.meetings.map(function (m) {
+            var isOpen = expanded === m.id;
+            return h("div", { key: m.id, className: "dk-card dk-meeting" },
+              h("div", { className: "dk-meeting-head",
+                         onClick: function () { setExpanded(isOpen ? null : m.id); } },
+                h("span", { className: "dk-chev" + (isOpen ? " dk-chev-open" : "") }, "▸"),
+                h("span", { style: { fontWeight: 700, flex: 1 } }, m.title),
+                m.analysis
+                  ? h("span", { className: "dk-chip", style: {
+                        color: sentimentColor(m.analysis.sentimentScore),
+                        borderColor: sentimentColor(m.analysis.sentimentScore) } },
+                      Number(m.analysis.satisfactionScore).toFixed(0) + "/10")
+                  : h("button", { className: "dk-btn", style: { fontSize: 12 },
+                        disabled: busy !== null,
+                        onClick: function (e) { e.stopPropagation(); analyzeOne(m.id); } },
+                      busy === m.id ? "Analyzing…" : "✨ Analyze"),
+                h("span", { style: { color: MUTED, fontSize: 12 } },
+                  (m.provider === "import" ? "imported" : m.provider) +
+                  (m.heldAt ? " · " + fmtWhen(m.heldAt) : "") +
+                  (m.durationMin ? " · " + Math.round(m.durationMin) + "m" : ""))),
+              isOpen && m.analysis ? h(AnalysisView, { analysis: m.analysis }) : null,
+              isOpen && !m.analysis
+                ? h("div", { style: { color: MUTED, fontSize: 13, marginTop: 6 } },
+                    "Not analyzed yet — hit ✨ Analyze.")
+                : null);
+          }));
+  }
+
+  // -------------------------------------------------------------------------
+  // Import modal
+  // -------------------------------------------------------------------------
+  function ImportModal(props) {
+    var titleSt = useState("");
+    var title = titleSt[0], setTitle = titleSt[1];
+    var textSt = useState("");
+    var text = textSt[0], setText = textSt[1];
+    var busySt = useState(false);
+    var busy = busySt[0], setBusy = busySt[1];
+    var errSt = useState(null);
+    var err = errSt[0], setErr = errSt[1];
+
+    function save() {
+      if (!title.trim() || !text.trim() || busy) return;
+      setBusy(true); setErr(null);
+      postJSON("/import", { title: title.trim(), transcript: text })
+        .then(function (r) { props.onState(r.state); props.onClose(); })
+        .catch(function (e) { setErr(String((e && e.message) || e)); })
+        .finally(function () { setBusy(false); });
+    }
+
+    return h("div", { className: "dk-modal", onClick: function (e) {
+          if (e.target === e.currentTarget) props.onClose();
+        } },
+      h("div", { className: "dk-modal-box", style: { maxWidth: 560 } },
+        h("div", { style: { fontWeight: 800, fontSize: 15, marginBottom: 8 } },
+          "Import a meeting transcript"),
+        h("div", { style: { color: MUTED, fontSize: 12.5, marginBottom: 10 } },
+          "Paste from any tool — Otter, Zoom, Fathom exports, or plain notes."),
+        h("input", {
+          className: "dk-input", placeholder: "Meeting title (e.g. Acme kickoff — Aug 4)",
+          value: title, autoFocus: true,
+          onChange: function (e) { setTitle(e.target.value); } }),
+        h("textarea", {
+          className: "dk-input", rows: 10, style: { marginTop: 8 },
+          placeholder: "Paste the transcript or detailed notes here…",
+          value: text,
+          onChange: function (e) { setText(e.target.value); } }),
+        err ? h("div", { className: "dk-err" }, err) : null,
+        h("div", { className: "dk-modal-row" },
+          h("button", { className: "dk-btn", onClick: props.onClose }, "Cancel"),
+          h("button", { className: "dk-btn dk-btn-primary",
+                        disabled: busy || !title.trim() || !text.trim(),
+                        onClick: save }, busy ? "Importing…" : "Import"))));
+  }
+
+  // -------------------------------------------------------------------------
+  // Page
+  // -------------------------------------------------------------------------
+  function DeliveryKitPage() {
+    var stSt = useState(null);
+    var st = stSt[0], setSt = stSt[1];
+    var errSt = useState(null);
+    var err = errSt[0], setErr = errSt[1];
+    var tabSt = useState("dashboard");
+    var tab = tabSt[0], setTab = tabSt[1];
+    var importSt = useState(false);
+    var showImport = importSt[0], setShowImport = importSt[1];
+
+    var refresh = useCallback(function () {
+      return api("/state")
+        .then(function (d) { setSt(d); setErr(null); })
+        .catch(function (e) { setErr(String((e && e.message) || e)); });
+    }, []);
+    useEffect(function () { refresh(); }, [refresh]);
+
+    if (!st) {
+      return h("div", { className: "dk-page" },
+        h("div", { style: { color: MUTED, padding: 40 } }, err || "Loading…"));
+    }
+
+    return h("div", { className: "dk-page" },
+      h("div", { className: "dk-inner" },
+        h("div", { style: { marginBottom: 14 } },
+          h("div", { style: { fontSize: 13, letterSpacing: 1.5, color: MUTED,
+                              textTransform: "uppercase" } }, "AI Cyber Value Creator"),
+          h("h1", { style: { fontSize: 30, margin: "4px 0 6px", fontWeight: 800 } },
+            "📦 Delivery Kit")),
+        h(ConnectBar, { providers: st.providers, onState: setSt,
+                        onImport: function () { setShowImport(true); } }),
+        h("div", { className: "dk-tabs" },
+          [["dashboard", "Delivery Dashboard"], ["meetings", "Meeting Analysis"]]
+            .map(function (t) {
+              return h("button", {
+                key: t[0],
+                className: "dk-tab" + (tab === t[0] ? " dk-tab-on" : ""),
+                onClick: function () { setTab(t[0]); },
+              }, t[1]);
+            })),
+        err ? h("div", { className: "dk-err" }, err) : null,
+        tab === "dashboard"
+          ? h(DashboardTab, { dashboard: st.dashboard })
+          : h(MeetingsTab, { meetings: st.meetings, providers: st.providers,
+                             onState: setSt,
+                             onImport: function () { setShowImport(true); } }),
+        showImport
+          ? h(ImportModal, { onState: setSt,
+                             onClose: function () { setShowImport(false); } })
+          : null));
+  }
+
+  window.__HERMES_PLUGINS__.register("delivery-kit", DeliveryKitPage);
+})();
