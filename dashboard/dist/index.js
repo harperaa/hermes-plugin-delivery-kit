@@ -828,27 +828,28 @@
                               textTransform: "uppercase" } }, "AI Cyber Value Creator"),
           h("h1", { style: { fontSize: 30, margin: "4px 0 6px", fontWeight: 800 } },
             "📦 Delivery Kit")),
-        h(ConnectBar, { providers: st.providers, onState: setSt,
-                        onImport: function () { setShowImport(true); } }),
-        h(SyncBar, { providers: st.providers, meetings: st.meetings,
-                     batch: st.batch, onState: setSt,
-                     onImport: function () { setShowImport(true); } }),
         h("div", { className: "dk-tabs" },
           [["dashboard", "Delivery Dashboard"], ["meetings", "Meeting Analysis"]]
             .map(function (t) {
               return h("button", {
                 key: t[0],
-                className: "dk-tab" + (tab === t[0] ? " dk-tab-on" : ""),
+                className: "dk-pagetab" + (tab === t[0] ? " dk-pagetab-active" : ""),
                 onClick: function () { pickTab(t[0]); },
               }, t[1]);
             })),
         err ? h("div", { className: "dk-err" }, err) : null,
         tab === "dashboard"
           ? h(DashboardTab, { dashboard: st.dashboard })
-          : h(MeetingsTab, { meetings: st.meetings, providers: st.providers,
-                             batch: st.batch,
-                             onState: setSt,
-                             onImport: function () { setShowImport(true); } }),
+          : h(React.Fragment, null,
+              h(ConnectBar, { providers: st.providers, onState: setSt,
+                              onImport: function () { setShowImport(true); } }),
+              h(SyncBar, { providers: st.providers, meetings: st.meetings,
+                           batch: st.batch, onState: setSt,
+                           onImport: function () { setShowImport(true); } }),
+              h(MeetingsTab, { meetings: st.meetings, providers: st.providers,
+                               batch: st.batch,
+                               onState: setSt,
+                               onImport: function () { setShowImport(true); } })),
         showImport
           ? h(ImportModal, { onState: setSt,
                              onClose: function () { setShowImport(false); } })
