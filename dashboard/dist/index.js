@@ -409,18 +409,11 @@
         a.meetingType
           ? h("span", { className: "dk-chip dk-chip-type" }, a.meetingType)
           : null,
-        h("span", { className: "dk-chip",
-                    style: { color: scaleColor(sentimentPct(a.sentimentScore) / 100),
+        h("span", { className: "dk-chip dk-chip-fill",
+                    style: { background: scaleColor(sentimentPct(a.sentimentScore) / 100),
                              borderColor: scaleColor(sentimentPct(a.sentimentScore) / 100) } },
           sentimentFace(a.sentimentScore) + " sentiment " + a.sentimentLabel +
-          " · " + sentimentPct(a.sentimentScore) + "%"),
-        Number(a.satisfactionScore) >= 0
-          ? h("span", { className: "dk-chip",
-                      style: { color: scaleColor(Number(a.satisfactionScore) / 10),
-                               borderColor: scaleColor(Number(a.satisfactionScore) / 10) } },
-              "satisfaction " + Number(a.satisfactionScore).toFixed(0) + "/10")
-          : h("span", { className: "dk-chip dk-chip-type" },
-              "satisfaction n/a — not a client meeting")),
+          " · " + sentimentPct(a.sentimentScore) + "%")),
       h("p", { style: { margin: "6px 0", fontSize: 13.5 } }, a.overview),
       h("p", { style: { margin: "6px 0", fontSize: 12.5, color: MUTED } },
         a.satisfactionRationale),
@@ -700,20 +693,14 @@
                         ? h("span", { className: "dk-chip dk-chip-type" },
                             m.analysis.meetingType)
                         : null,
-                      h("span", { className: "dk-chip", title: "Sentiment " +
+                      h("span", { className: "dk-chip dk-chip-fill",
+                          title: "Client sentiment " +
                             sentimentPct(m.analysis.sentimentScore) + "%",
                           style: {
-                            color: scaleColor(sentimentPct(m.analysis.sentimentScore) / 100),
+                            background: scaleColor(sentimentPct(m.analysis.sentimentScore) / 100),
                             borderColor: scaleColor(sentimentPct(m.analysis.sentimentScore) / 100) } },
                         sentimentFace(m.analysis.sentimentScore) + " " +
                         sentimentPct(m.analysis.sentimentScore) + "%"),
-                      Number(m.analysis.satisfactionScore) >= 0
-                        ? h("span", { className: "dk-chip", title: "Client satisfaction",
-                            style: {
-                              color: scaleColor(Number(m.analysis.satisfactionScore) / 10),
-                              borderColor: scaleColor(Number(m.analysis.satisfactionScore) / 10) } },
-                            Number(m.analysis.satisfactionScore).toFixed(0) + "/10")
-                        : null,
                       h("button", { className: "dk-btn", style: { fontSize: 12 },
                           disabled: busy !== null || batchRunning,
                           title: "Re-analyze — optionally tell the analyst what to fix",
