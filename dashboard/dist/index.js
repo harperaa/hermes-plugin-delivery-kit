@@ -432,6 +432,74 @@
       list("Risks", a.risks));
   }
 
+  function SyncBar(props) {
+    var busySt = useState(null);
+    var busy = busySt[0], setBusy = busySt[1];
+    var noticeSt = useState(null);
+    var notice = noticeSt[0], setNotice = noticeSt[1];
+
+
+    function stopBatch() {
+      postJSON("/analyze-all/stop", {})
+        .then(function () { api("/state").then(props.onState); })
+        .catch(function () {});
+    }
+
+    var unanalyzed = (props.meetings || []).filter(function (m) {
+      return !m.hasAnalysis;
+    }).length;
+    var batch = props.batch || {};
+    var batchRunning = !!batch.running;
+
+    return h("div", { className: "dk-card", style: { display: "flex", gap: 10,
+               alignItems: "center", flexWrap: "wrap", marginBottom: 16 } },
+      syncable.length
+        ? syncable.map(function (p) {
+            return h("button", { key: p.id, className: "dk-btn dk-btn-primary",
+                          disabled: busy !== null,
+                          title: "Pull latest transcripts from " + p.label,
+                          onClick: function () { sync(p.id); } },
+              busy === "sync" ? "Syncing…" : "⟳ Sync " + p.label);
+          })
+        : h("button", { className: "dk-btn dk-btn-primary", disabled: true,
+              title: anySyncable
+                ? "Connect a provider above (Fireflies, Fathom, Grain, tl;dv) to sync"
+                : "" },
+            "⟳ Sync"),
+      h("button", { className: "dk-btn", disabled: busy !== null,
+                    onClick: props.onImport }, "＋ Import transcript"),
+      unanalyzed > 0 && !batchRunning
+        ? h("button", { className: "dk-btn", disabled: busy !== null,
+                        onClick: analyzeAll },
+            busy === "all" ? "Starting…" : "✨ Analyze all (" + unanalyzed + ")")
+        : null,
+      batchRunning
+        ? h(React.Fragment, null,
+            h("span", { className: "dk-batch" },
+              h("span", { className: "dk-spin" }, "◐"),
+              batch.cancelRequested
+                ? " Stopping after the current meeting…"
+                : " Analyzing " + ((batch.done || 0) + 1) + "/" + batch.total +
+                  (batch.current ? " — " + batch.current : "") +
+                  " · safe to leave or refresh"),
+            batch.cancelRequested ? null : h("button", {
+              className: "dk-btn", style: { fontSize: 12 },
+              title: "Stop after the meeting currently being analyzed",
+              onClick: stopBatch,
+            }, "⏹ Stop"))
+        : null,
+      !batchRunning && batch.cancelled
+        ? h("span", { style: { color: MUTED, fontSize: 12.5 } },
+            "Stopped at " + batch.done + "/" + batch.total + ".")
+        : null,
+      !batchRunning && !batch.cancelled && batch.finishedAt && (batch.failed || 0) > 0
+        ? h("span", { style: { color: "#f87171", fontSize: 12.5 } },
+            "Last run: " + batch.failed + " of " + batch.total + " failed — retry with ✨")
+        : null,
+      h("span", { style: { flex: 1 } }),
+      notice ? h("span", { style: { color: MUTED, fontSize: 12.5 } }, notice) : null);
+  }
+
   function MeetingsTab(props) {
     var busySt = useState(null);      // meeting id being analyzed, or "sync"/"all"
     var busy = busySt[0], setBusy = busySt[1];
@@ -439,23 +507,6 @@
     var notice = noticeSt[0], setNotice = noticeSt[1];
     var expandSt = useState(null);
     var expanded = expandSt[0], setExpanded = expandSt[1];
-
-    var syncable = (props.providers || []).filter(function (p) {
-      return p.canSync && p.connected;
-    });
-    var anySyncable = (props.providers || []).some(function (p) { return p.canSync; });
-
-    function sync(providerId) {
-      setBusy("sync"); setNotice(null);
-      postJSON("/sync", { provider: providerId })
-        .then(function (r) {
-          props.onState(r.state);
-          setNotice("Synced " + r.fetched + " meeting(s) from " + r.provider +
-            ", " + r.new + " new.");
-        })
-        .catch(function (e) { setNotice(String((e && e.message) || e)); })
-        .finally(function () { setBusy(null); });
-    }
 
     function analyzeOne(id) {
       setBusy(id); setNotice(null);
@@ -465,16 +516,10 @@
         .finally(function () { setBusy(null); });
     }
 
-    function analyzeAll() {
-      setBusy("all"); setNotice(null);
-      postJSON("/analyze-all", {})
-        .then(function (r) { props.onState(r.state); })
-        .catch(function (e) { setNotice(String((e && e.message) || e)); })
-        .finally(function () { setBusy(null); });
-    }
-
     var filterSt = useState(null);        // "strengths" | "weaknesses" | "risks"
     var filter = filterSt[0], setFilter = filterSt[1];
+    var batch = props.batch || {};
+    var batchRunning = !!batch.running;
     var typeSt = useState(null);          // "client"|"sales"|"internal"|"other"
     var typeFilter = typeSt[0], setTypeFilter = typeSt[1];
     var TYPES = [["client", "🏢 Client"], ["sales", "💼 Sales"],
@@ -502,11 +547,6 @@
       }, 250);
     }
 
-    function stopBatch() {
-      postJSON("/analyze-all/stop", {})
-        .then(function () { props.onState && api("/state").then(props.onState); })
-        .catch(function () {});
-    }
     var CATS = [
       ["strengths", "💪 Strengths"],
       ["weaknesses", "📉 Weaknesses"],
@@ -547,9 +587,6 @@
         .finally(function () { setBusy(null); setFeedbackText(""); });
     }
 
-    var unanalyzed = props.meetings.filter(function (m) { return !m.hasAnalysis; }).length;
-    var batch = props.batch || {};
-    var batchRunning = !!batch.running;
 
     var filterBar = h(React.Fragment, null,
       h("div", { className: "dk-filterbar" },
@@ -616,53 +653,6 @@
 
     return h("div", null,
       filterBar,
-      h("div", { className: "dk-card", style: { display: "flex", gap: 10,
-                 alignItems: "center", flexWrap: "wrap" } },
-        syncable.length
-          ? syncable.map(function (p) {
-              return h("button", { key: p.id, className: "dk-btn dk-btn-primary",
-                            disabled: busy !== null,
-                            title: "Pull latest transcripts from " + p.label,
-                            onClick: function () { sync(p.id); } },
-                busy === "sync" ? "Syncing…" : "⟳ Sync " + p.label);
-            })
-          : h("button", { className: "dk-btn dk-btn-primary", disabled: true,
-                title: anySyncable
-                  ? "Connect a provider above (Fireflies, Fathom, Grain, tl;dv) to sync"
-                  : "" },
-              "⟳ Sync"),
-        h("button", { className: "dk-btn", disabled: busy !== null,
-                      onClick: props.onImport }, "＋ Import transcript"),
-        unanalyzed > 0 && !batchRunning
-          ? h("button", { className: "dk-btn", disabled: busy !== null,
-                          onClick: analyzeAll },
-              busy === "all" ? "Starting…" : "✨ Analyze all (" + unanalyzed + ")")
-          : null,
-        batchRunning
-          ? h(React.Fragment, null,
-              h("span", { className: "dk-batch" },
-                h("span", { className: "dk-spin" }, "◐"),
-                batch.cancelRequested
-                  ? " Stopping after the current meeting…"
-                  : " Analyzing " + ((batch.done || 0) + 1) + "/" + batch.total +
-                    (batch.current ? " — " + batch.current : "") +
-                    " · safe to leave or refresh"),
-              batch.cancelRequested ? null : h("button", {
-                className: "dk-btn", style: { fontSize: 12 },
-                title: "Stop after the meeting currently being analyzed",
-                onClick: stopBatch,
-              }, "⏹ Stop"))
-          : null,
-        !batchRunning && batch.cancelled
-          ? h("span", { style: { color: MUTED, fontSize: 12.5 } },
-              "Stopped at " + batch.done + "/" + batch.total + ".")
-          : null,
-        !batchRunning && batch.finishedAt && (batch.failed || 0) > 0
-          ? h("span", { style: { color: "#f87171", fontSize: 12.5 } },
-              "Last run: " + batch.failed + " of " + batch.total + " failed — retry with ✨")
-          : null,
-        h("span", { style: { flex: 1 } }),
-        notice ? h("span", { style: { color: MUTED, fontSize: 12.5 } }, notice) : null),
       props.meetings.length === 0
         ? h("div", { className: "dk-card", style: { color: MUTED, fontSize: 13.5 } },
             "No meetings yet — Sync a provider or Import a transcript.")
@@ -801,8 +791,15 @@
     var st = stSt[0], setSt = stSt[1];
     var errSt = useState(null);
     var err = errSt[0], setErr = errSt[1];
-    var tabSt = useState("dashboard");
+    var tabSt = useState(function () {
+      try { return localStorage.getItem("dk-tab") || "dashboard"; }
+      catch (e) { return "dashboard"; }
+    });
     var tab = tabSt[0], setTab = tabSt[1];
+    function pickTab(t) {
+      setTab(t);
+      try { localStorage.setItem("dk-tab", t); } catch (e) {}
+    }
     var importSt = useState(false);
     var showImport = importSt[0], setShowImport = importSt[1];
 
@@ -833,13 +830,16 @@
             "📦 Delivery Kit")),
         h(ConnectBar, { providers: st.providers, onState: setSt,
                         onImport: function () { setShowImport(true); } }),
+        h(SyncBar, { providers: st.providers, meetings: st.meetings,
+                     batch: st.batch, onState: setSt,
+                     onImport: function () { setShowImport(true); } }),
         h("div", { className: "dk-tabs" },
           [["dashboard", "Delivery Dashboard"], ["meetings", "Meeting Analysis"]]
             .map(function (t) {
               return h("button", {
                 key: t[0],
                 className: "dk-tab" + (tab === t[0] ? " dk-tab-on" : ""),
-                onClick: function () { setTab(t[0]); },
+                onClick: function () { pickTab(t[0]); },
               }, t[1]);
             })),
         err ? h("div", { className: "dk-err" }, err) : null,
