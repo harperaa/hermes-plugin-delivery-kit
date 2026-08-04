@@ -105,12 +105,31 @@ FIRST classify meetingType:
   sentiment score.
 - insights: concrete, decision-useful takeaways (3-8)
 - sentimentScore/-Label: the counterpart's sentiment (the client's when
-  present; the room's overall for internal). Read the OVERALL DEMEANOR,
-  not only explicit statements — an engaged, warm client who jokes, plans
-  ahead, and leans into the work is genuinely positive even without saying
-  "I'm happy". Guide: thrilled/energized 0.7-0.9 (reserve 0.9+ for
-  exceptional delight); warm and engaged 0.5-0.7; flat/transactional
-  0.2-0.4; 0.0 truly neutral; tension or frustration goes negative.
+  present; the room's overall for internal). Read the OVERALL DEMEANOR
+  across the whole meeting, not only explicit statements. Weigh the
+  strongest genuine moments, not the polite average: laughter and banter,
+  warm personal greetings, congratulating each other, spontaneous
+  enthusiasm ("I love this", "awesome", "this is amazing"), sharing wins,
+  and eagerly building on ideas are all TOP-BAND evidence — pick evidence
+  quotes from those moments, not from routine pleasantries like "I'm
+  great, thanks" or "sounds good".
+  Bands (score the band the meeting's best genuine energy reaches, and do
+  not shade down for ordinary working discussion in between):
+    0.8 to 1.0: energized — laughter/banter, spontaneous enthusiasm, warm
+                rapport, momentum. A friendly high-energy session belongs
+                HERE, not below. 0.9+ when that energy runs through the
+                whole meeting.
+    0.5 to 0.8: pleasant and engaged but measured — cooperative, on-task,
+                little spark.
+    0.2 to 0.5: flat or purely transactional.
+    around 0.0: truly neutral or unreadable.
+    below 0.0:  any real tension, frustration, or disengagement.
+  CONSISTENCY RULE: the score must match your own sentimentQuotes — if the
+  best quotes you found are top-band moments ("I love this stuff", "this
+  is gold"), the score IS top-band (0.8+); never average genuine delight
+  down against quiet listening stretches. In coaching-style calls the
+  client listening intently while the mentor talks is engagement, not
+  flatness.
 - satisfactionScore: ONLY for client/sales meetings, else -1. CALIBRATION
   BANDS — use the full range:
     9-10: strong praise, OR clear renewal/expansion/referral signals, OR

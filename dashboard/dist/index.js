@@ -230,6 +230,8 @@
     var ev = props.ev;                // {meetingId, meetingTitle, quotes, label}
     var txSt = useState(null);
     var tx = txSt[0], setTx = txSt[1];
+    var metaSt = useState(null);      // fetched meeting row (heldAt etc.)
+    var meta = metaSt[0], setMeta = metaSt[1];
     var errSt = useState(null);
     var err = errSt[0], setErr = errSt[1];
     var boxRef = useRef(null);
@@ -237,7 +239,11 @@
     useEffect(function () {
       var alive = true;
       api("/meeting/" + encodeURIComponent(ev.meetingId))
-        .then(function (d) { if (alive) setTx(d.transcript || ""); })
+        .then(function (d) {
+          if (!alive) return;
+          setMeta(d);
+          setTx(d.transcript || "");
+        })
         .catch(function (e) { if (alive) setErr(String((e && e.message) || e)); });
       return function () { alive = false; };
     }, [ev.meetingId]);
@@ -305,6 +311,16 @@
       h("div", { className: "dk-modal-box", style: { maxWidth: 780 }, ref: boxRef },
         h("div", { style: { fontWeight: 800, fontSize: 15, marginBottom: 2 } },
           "📜 " + ev.meetingTitle),
+        meta && (meta.heldAt || meta.createdAt)
+          ? h("div", { style: { color: MUTED, fontSize: 12, marginBottom: 2 } },
+              "🕐 " + new Date((meta.heldAt || meta.createdAt) * 1000)
+                .toLocaleString(undefined,
+                  { weekday: "short", month: "short", day: "numeric",
+                    year: "numeric", hour: "numeric", minute: "2-digit" }) +
+              (meta.durationMin
+                ? " · " + Math.round(meta.durationMin) + " min"
+                : ""))
+          : null,
         ev.label
           ? h("div", { style: { color: MUTED, fontSize: 12.5, marginBottom: 8 } },
               ev.label)
