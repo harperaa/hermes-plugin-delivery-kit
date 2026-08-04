@@ -158,6 +158,7 @@
   var useState = hooks.useState;
   var useEffect = hooks.useEffect;
   var useCallback = hooks.useCallback;
+  var useRef = hooks.useRef;
 
   var API = "/api/plugins/delivery-kit";
 
@@ -309,6 +310,14 @@
   // -------------------------------------------------------------------------
   function DashboardTab(props) {
     var d = props.dashboard || {};
+    var qSt = useState("");
+    var q = qSt[0], setQ = qSt[1];
+    function hit(it) {
+      if (!q.trim()) return true;
+      var needle = q.trim().toLowerCase();
+      return it.text.toLowerCase().indexOf(needle) !== -1 ||
+        it.meeting.toLowerCase().indexOf(needle) !== -1;
+    }
     if (!d.analyzed) {
       return h("div", { className: "dk-card", style: { color: MUTED, fontSize: 13.5 } },
         d.total
@@ -322,7 +331,8 @@
         sub ? h("div", { className: "dk-stat-s" }, sub) : null);
     }
     function bucket(title, icon, items, cls) {
-      if (!items || !items.length) return null;
+      items = (items || []).filter(hit);
+      if (!items.length) return null;
       return h("div", { className: "dk-card" },
         h("div", { style: { fontWeight: 800, marginBottom: 8 } }, icon + " " + title),
         h("ul", { className: "dk-list " + (cls || "") },
@@ -334,6 +344,12 @@
           })));
     }
     return h("div", null,
+      h("input", {
+        className: "dk-input dk-search", type: "search", value: q,
+        placeholder: "🔎 Filter the dashboard — keyword or meeting title…",
+        style: { marginBottom: 12 },
+        onChange: function (e) { setQ(e.target.value); },
+      }),
       h("div", { className: "dk-stats" },
         stat("meetings analyzed", d.analyzed + " / " + d.total),
         stat("avg satisfaction", d.avgSatisfaction.toFixed(1) + " / 10", null,
@@ -426,14 +442,44 @@
 
     var filterSt = useState(null);        // "strengths" | "weaknesses" | "risks"
     var filter = filterSt[0], setFilter = filterSt[1];
+    var qSt = useState("");
+    var q = qSt[0], setQ = qSt[1];
+    var idsSt = useState(null);           // server-matched ids (incl. transcripts)
+    var matchIds = idsSt[0], setMatchIds = idsSt[1];
+    var qTimer = useRef(null);
+
+    function runSearch(text) {
+      setQ(text);
+      if (qTimer.current) window.clearTimeout(qTimer.current);
+      if (!text.trim()) { setMatchIds(null); return; }
+      qTimer.current = window.setTimeout(function () {
+        api("/search?q=" + encodeURIComponent(text.trim()))
+          .then(function (d) { setMatchIds(d.ids); })
+          .catch(function () { setMatchIds(null); });
+      }, 250);
+    }
+
+    function stopBatch() {
+      postJSON("/analyze-all/stop", {})
+        .then(function () { props.onState && api("/state").then(props.onState); })
+        .catch(function () {});
+    }
     var CATS = [
       ["strengths", "💪 Strengths"],
       ["weaknesses", "📉 Weaknesses"],
       ["risks", "🚨 Risks"],
     ];
+    function matchesSearch(m) {
+      if (!q.trim()) return true;
+      if (matchIds) return matchIds.indexOf(m.id) !== -1;
+      var needle = q.trim().toLowerCase();
+      return (m.title || "").toLowerCase().indexOf(needle) !== -1 ||
+        JSON.stringify(m.analysis || {}).toLowerCase().indexOf(needle) !== -1;
+    }
+
     function catItems(key) {
       var out = [];
-      props.meetings.forEach(function (m) {
+      props.meetings.filter(matchesSearch).forEach(function (m) {
         ((m.analysis && m.analysis[key]) || []).forEach(function (text) {
           out.push({ text: text, meeting: m.title,
                      heldAt: m.heldAt || m.createdAt });
@@ -461,6 +507,11 @@
     var batchRunning = !!batch.running;
 
     var filterBar = h("div", { className: "dk-filterbar" },
+      h("input", {
+        className: "dk-input dk-search", type: "search", value: q,
+        placeholder: "🔎 Search meetings — title, transcript, analysis…",
+        onChange: function (e) { runSearch(e.target.value); },
+      }),
       CATS.map(function (c) {
         var n = catItems(c[0]).length;
         return h("button", {
@@ -530,11 +581,23 @@
               busy === "all" ? "Starting…" : "✨ Analyze all (" + unanalyzed + ")")
           : null,
         batchRunning
-          ? h("span", { className: "dk-batch" },
-              h("span", { className: "dk-spin" }, "◐"),
-              " Analyzing " + ((batch.done || 0) + 1) + "/" + batch.total +
-              (batch.current ? " — " + batch.current : "") +
-              " · safe to leave or refresh")
+          ? h(React.Fragment, null,
+              h("span", { className: "dk-batch" },
+                h("span", { className: "dk-spin" }, "◐"),
+                batch.cancelRequested
+                  ? " Stopping after the current meeting…"
+                  : " Analyzing " + ((batch.done || 0) + 1) + "/" + batch.total +
+                    (batch.current ? " — " + batch.current : "") +
+                    " · safe to leave or refresh"),
+              batch.cancelRequested ? null : h("button", {
+                className: "dk-btn", style: { fontSize: 12 },
+                title: "Stop after the meeting currently being analyzed",
+                onClick: stopBatch,
+              }, "⏹ Stop"))
+          : null,
+        !batchRunning && batch.cancelled
+          ? h("span", { style: { color: MUTED, fontSize: 12.5 } },
+              "Stopped at " + batch.done + "/" + batch.total + ".")
           : null,
         !batchRunning && batch.finishedAt && (batch.failed || 0) > 0
           ? h("span", { style: { color: "#f87171", fontSize: 12.5 } },
@@ -544,8 +607,11 @@
         notice ? h("span", { style: { color: MUTED, fontSize: 12.5 } }, notice) : null),
       props.meetings.length === 0
         ? h("div", { className: "dk-card", style: { color: MUTED, fontSize: 13.5 } },
-            "No meetings yet — Sync Fireflies or Import a transcript.")
-        : props.meetings.map(function (m) {
+            "No meetings yet — Sync a provider or Import a transcript.")
+        : props.meetings.filter(matchesSearch).length === 0
+        ? h("div", { className: "dk-card", style: { color: MUTED, fontSize: 13.5 } },
+            "No meetings match \u201C" + q + "\u201D.")
+        : props.meetings.filter(matchesSearch).map(function (m) {
             var isOpen = expanded === m.id;
             return h("div", { key: m.id, className: "dk-card dk-meeting" },
               h("div", { className: "dk-meeting-head",

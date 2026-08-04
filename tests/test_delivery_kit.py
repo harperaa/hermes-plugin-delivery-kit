@@ -272,6 +272,38 @@ def test_batch_skips_analyzed_and_persists(home, monkeypatch):
         analysis.start_batch()
 
 
+def test_batch_stop_cancels_between_meetings(home, monkeypatch):
+    import time
+    ids = []
+    for i in range(3):
+        mid, _ = store.upsert_meeting("import", None, f"M{i}", 100.0 + i,
+                                      None, "transcript text")
+        ids.append(mid)
+    started = []
+
+    def slow_analyze(mid, feedback=""):
+        started.append(mid)
+        if len(started) == 1:
+            analysis.stop_batch()          # cancel right after the first starts
+        store.save_analysis(mid, {"overview": "x", "insights": [],
+                                  "sentimentScore": 0, "sentimentLabel": "neutral",
+                                  "satisfactionScore": 5,
+                                  "satisfactionRationale": "r"})
+        return {}
+
+    monkeypatch.setattr(analysis, "analyze_meeting", slow_analyze)
+    analysis.start_batch()
+    for _ in range(50):
+        if not analysis.batch_status().get("running"):
+            break
+        time.sleep(0.05)
+    st = analysis.batch_status()
+    assert st.get("cancelled") is True
+    assert len(started) == 1               # stopped before meeting 2
+    with pytest.raises(RuntimeError):      # nothing running anymore
+        analysis.stop_batch()
+
+
 def test_redo_feedback_reaches_the_prompt(home, monkeypatch):
     mid, _ = store.upsert_meeting("import", None, "Redo me", 100.0, None,
                                   "Client: fine I guess")

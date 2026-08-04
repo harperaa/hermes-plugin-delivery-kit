@@ -214,6 +214,11 @@ def _batch_worker(ids: list, titles: dict) -> None:
     done = 0
     failed = 0
     for mid in ids:
+        if batch_status().get("cancelRequested"):
+            _write_batch({"running": False, "total": len(ids), "done": done,
+                          "failed": failed, "cancelled": True,
+                          "finishedAt": _time.time()})
+            return
         _write_batch({"running": True, "total": len(ids), "done": done,
                       "failed": failed, "current": titles.get(mid, "")})
         try:
@@ -253,3 +258,14 @@ def start_batch() -> dict:
                              daemon=True)
         t.start()
         return {"started": True, "total": len(ids)}
+
+
+def stop_batch() -> dict:
+    """Request cancellation; the worker stops before its next meeting (the
+    in-flight analysis finishes — LLM calls are not interruptible)."""
+    st = batch_status()
+    if not st.get("running"):
+        raise RuntimeError("no Analyze-all run is in progress")
+    st["cancelRequested"] = True
+    _write_batch(st)
+    return {"stopping": True}

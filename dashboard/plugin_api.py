@@ -155,6 +155,24 @@ def analyze_all():
     return {**out, "state": _public_state()}
 
 
+@router.post("/analyze-all/stop")
+def analyze_all_stop():
+    try:
+        return analysis.stop_batch()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.get("/search")
+def search(q: str = ""):
+    """Meeting ids matching q across title, transcript, and analysis —
+    powers the Meetings-tab search (transcripts included)."""
+    if not q.strip():
+        return {"ids": None}
+    hits = store.search_meetings(query=q.strip(), limit=200)
+    return {"ids": [m["id"] for m in hits]}
+
+
 @router.get("/meeting/{meeting_id}")
 def meeting_detail(meeting_id: int):
     m = store.get_meeting(meeting_id, with_transcript=True)
