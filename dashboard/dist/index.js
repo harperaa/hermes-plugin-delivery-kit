@@ -290,6 +290,7 @@
     var n = pts.length;
     var bw = (W - pad * 2) / n;
     var bars = pts.map(function (p, i) {
+      if (p.satisfaction == null) return null;
       var bh = Math.max(2, (p.satisfaction / 10) * (H - pad * 2));
       return h("rect", {
         key: "b" + i,
@@ -370,14 +371,19 @@
       }),
       h("div", { className: "dk-stats" },
         stat("meetings analyzed", d.analyzed + " / " + d.total),
-        stat("avg satisfaction", d.avgSatisfaction.toFixed(1) + " / 10", null,
-          d.avgSatisfaction >= 7 ? "#22c55e" : d.avgSatisfaction >= 5 ? "#eab308" : "#ef4444"),
-        stat("avg sentiment", d.avgSentiment.toFixed(2),
+        d.avgSatisfaction != null
+          ? stat("avg client satisfaction", d.avgSatisfaction.toFixed(1) + " / 10",
+              d.satisfactionMeetings + " client/sales meeting(s)",
+              scaleColor(d.avgSatisfaction / 10))
+          : stat("client satisfaction", "n/a", "no client meetings analyzed"),
+        stat("avg sentiment", sentimentPct(d.avgSentiment) + "%",
           d.avgSentiment >= 0.35 ? "positive" : d.avgSentiment >= 0 ? "neutral" : "negative",
-          sentimentColor(d.avgSentiment)),
-        stat("latest meeting", d.latestSatisfaction.toFixed(0) + " / 10",
-          "sentiment " + d.latestSentiment.toFixed(2),
-          sentimentColor(d.latestSentiment))),
+          scaleColor(sentimentPct(d.avgSentiment) / 100)),
+        stat("latest meeting",
+          d.latestSatisfaction != null ? d.latestSatisfaction.toFixed(0) + " / 10"
+            : sentimentPct(d.latestSentiment) + "%",
+          "sentiment " + sentimentPct(d.latestSentiment) + "%",
+          scaleColor(sentimentPct(d.latestSentiment) / 100))),
       h(TrendChart, { trend: d.trend }),
       bucket("Risks heard", "⚠️", d.risks, "dk-risks"),
       bucket("Lessons learned", "🎓", d.lessons),
@@ -400,15 +406,21 @@
     }
     return h("div", { className: "dk-analysis" },
       h("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 6 } },
+        a.meetingType
+          ? h("span", { className: "dk-chip dk-chip-type" }, a.meetingType)
+          : null,
         h("span", { className: "dk-chip",
                     style: { color: scaleColor(sentimentPct(a.sentimentScore) / 100),
                              borderColor: scaleColor(sentimentPct(a.sentimentScore) / 100) } },
           sentimentFace(a.sentimentScore) + " sentiment " + a.sentimentLabel +
           " · " + sentimentPct(a.sentimentScore) + "%"),
-        h("span", { className: "dk-chip",
-                    style: { color: scaleColor(Number(a.satisfactionScore) / 10),
-                             borderColor: scaleColor(Number(a.satisfactionScore) / 10) } },
-          "satisfaction " + Number(a.satisfactionScore).toFixed(0) + "/10")),
+        Number(a.satisfactionScore) >= 0
+          ? h("span", { className: "dk-chip",
+                      style: { color: scaleColor(Number(a.satisfactionScore) / 10),
+                               borderColor: scaleColor(Number(a.satisfactionScore) / 10) } },
+              "satisfaction " + Number(a.satisfactionScore).toFixed(0) + "/10")
+          : h("span", { className: "dk-chip dk-chip-type" },
+              "satisfaction n/a — not a client meeting")),
       h("p", { style: { margin: "6px 0", fontSize: 13.5 } }, a.overview),
       h("p", { style: { margin: "6px 0", fontSize: 12.5, color: MUTED } },
         a.satisfactionRationale),
@@ -463,6 +475,16 @@
 
     var filterSt = useState(null);        // "strengths" | "weaknesses" | "risks"
     var filter = filterSt[0], setFilter = filterSt[1];
+    var typeSt = useState(null);          // "client"|"sales"|"internal"|"other"
+    var typeFilter = typeSt[0], setTypeFilter = typeSt[1];
+    var TYPES = [["client", "🏢 Client"], ["sales", "💼 Sales"],
+                 ["internal", "👥 Internal"], ["other", "▫️ Other"]];
+    function mType(m) {
+      return (m.analysis && m.analysis.meetingType) || null;
+    }
+    function matchesType(m) {
+      return !typeFilter || mType(m) === typeFilter;
+    }
     var qSt = useState("");
     var q = qSt[0], setQ = qSt[1];
     var idsSt = useState(null);           // server-matched ids (incl. transcripts)
@@ -500,7 +522,9 @@
 
     function catItems(key) {
       var out = [];
-      props.meetings.filter(matchesSearch).forEach(function (m) {
+      props.meetings.filter(function (m) {
+        return matchesSearch(m) && matchesType(m);
+      }).forEach(function (m) {
         ((m.analysis && m.analysis[key]) || []).forEach(function (text) {
           out.push({ text: text, meeting: m.title,
                      heldAt: m.heldAt || m.createdAt });
@@ -533,6 +557,17 @@
         placeholder: "🔎 Search meetings — title, transcript, analysis…",
         onChange: function (e) { runSearch(e.target.value); },
       }),
+      TYPES.map(function (t) {
+        var n = props.meetings.filter(function (m) { return mType(m) === t[0]; }).length;
+        if (!n) return null;
+        return h("button", {
+          key: "t" + t[0],
+          className: "dk-tab" + (typeFilter === t[0] ? " dk-tab-on" : ""),
+          title: "Show only " + t[0] + " meetings",
+          onClick: function () { setTypeFilter(typeFilter === t[0] ? null : t[0]); },
+        }, t[1] + " (" + n + ")");
+      }),
+      h("span", { className: "dk-fdiv" }),
       CATS.map(function (c) {
         var n = catItems(c[0]).length;
         return h("button", {
@@ -629,10 +664,14 @@
       props.meetings.length === 0
         ? h("div", { className: "dk-card", style: { color: MUTED, fontSize: 13.5 } },
             "No meetings yet — Sync a provider or Import a transcript.")
-        : props.meetings.filter(matchesSearch).length === 0
+        : props.meetings.filter(function (m) {
+            return matchesSearch(m) && matchesType(m);
+          }).length === 0
         ? h("div", { className: "dk-card", style: { color: MUTED, fontSize: 13.5 } },
-            "No meetings match \u201C" + q + "\u201D.")
-        : props.meetings.filter(matchesSearch).map(function (m) {
+            "No meetings match the current filters.")
+        : props.meetings.filter(function (m) {
+            return matchesSearch(m) && matchesType(m);
+          }).map(function (m) {
             var isOpen = expanded === m.id;
             return h("div", { key: m.id, className: "dk-card dk-meeting" },
               h("div", { className: "dk-meeting-head",
@@ -641,18 +680,24 @@
                 h("span", { style: { fontWeight: 700, flex: 1 } }, m.title),
                 m.analysis
                   ? h(React.Fragment, null,
-                      h("span", { className: "dk-chip", title: "Client sentiment " +
+                      m.analysis.meetingType
+                        ? h("span", { className: "dk-chip dk-chip-type" },
+                            m.analysis.meetingType)
+                        : null,
+                      h("span", { className: "dk-chip", title: "Sentiment " +
                             sentimentPct(m.analysis.sentimentScore) + "%",
                           style: {
                             color: scaleColor(sentimentPct(m.analysis.sentimentScore) / 100),
                             borderColor: scaleColor(sentimentPct(m.analysis.sentimentScore) / 100) } },
                         sentimentFace(m.analysis.sentimentScore) + " " +
                         sentimentPct(m.analysis.sentimentScore) + "%"),
-                      h("span", { className: "dk-chip", title: "Client satisfaction",
-                          style: {
-                            color: scaleColor(Number(m.analysis.satisfactionScore) / 10),
-                            borderColor: scaleColor(Number(m.analysis.satisfactionScore) / 10) } },
-                        Number(m.analysis.satisfactionScore).toFixed(0) + "/10"),
+                      Number(m.analysis.satisfactionScore) >= 0
+                        ? h("span", { className: "dk-chip", title: "Client satisfaction",
+                            style: {
+                              color: scaleColor(Number(m.analysis.satisfactionScore) / 10),
+                              borderColor: scaleColor(Number(m.analysis.satisfactionScore) / 10) } },
+                            Number(m.analysis.satisfactionScore).toFixed(0) + "/10")
+                        : null,
                       h("button", { className: "dk-btn", style: { fontSize: 12 },
                           disabled: busy !== null || batchRunning,
                           title: "Re-analyze — optionally tell the analyst what to fix",

@@ -146,10 +146,14 @@ def analyze(body: AnalyzeBody):
     return {"ok": True, "analysis": result, "state": _public_state()}
 
 
+class AnalyzeAllBody(BaseModel):
+    force: bool = False
+
+
 @router.post("/analyze-all")
-def analyze_all():
+def analyze_all(body: AnalyzeAllBody = None):
     try:
-        out = analysis.start_batch()
+        out = analysis.start_batch(force=bool(body and body.force))
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     return {**out, "state": _public_state()}

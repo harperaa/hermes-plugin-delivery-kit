@@ -20,6 +20,8 @@ PLUGIN_ID = "delivery-kit"
 _SCHEMA = {
     "type": "object",
     "properties": {
+        "meetingType": {"type": "string",
+                        "description": "client | sales | internal | other — client = delivery/service meeting with a paying client; sales = prospect; internal = own team/peers/mentors; other = anything else"},
         "overview": {"type": "string",
                      "description": "2-3 sentence meeting overview"},
         "insights": {"type": "array", "items": {"type": "string"},
@@ -29,7 +31,7 @@ _SCHEMA = {
         "sentimentLabel": {"type": "string",
                            "description": "one word: negative | mixed | neutral | positive"},
         "satisfactionScore": {"type": "number",
-                              "description": "Client satisfaction 0-10 as evidenced in THIS meeting"},
+                              "description": "Client satisfaction 0-10 as evidenced in THIS meeting. Use -1 when meetingType is internal/other (no client to satisfy)."},
         "satisfactionRationale": {"type": "string",
                                   "description": "One sentence citing the evidence for the score"},
         "lessons": {"type": "array", "items": {"type": "string"},
@@ -43,21 +45,38 @@ _SCHEMA = {
         "weaknesses": {"type": "array", "items": {"type": "string"},
                        "description": "What fell short — friction, complaints, or delivery gaps heard in the meeting (0-5)"},
     },
-    "required": ["overview", "insights", "sentimentScore", "sentimentLabel",
-                 "satisfactionScore", "satisfactionRationale"],
+    "required": ["meetingType", "overview", "insights", "sentimentScore",
+                 "sentimentLabel", "satisfactionScore", "satisfactionRationale"],
 }
 
 _INSTRUCTIONS = """You are the Delivery Analyst for a client-services business.
-You are given one client meeting transcript. Extract, with evidence, not
-vibes:
+You are given one meeting transcript. Extract, with evidence, not vibes.
+
+FIRST classify meetingType:
+- client: a delivery/service meeting with a paying client
+- sales: a prospect/pre-sale conversation
+- internal: own team, peers, advisors, mentors — no client present
+- other: anything else
+
 - overview (2-3 sentences)
 - insights: concrete, decision-useful takeaways (3-8)
-- sentimentScore/-Label: the CLIENT's sentiment, not the vendor's
-- satisfactionScore (0-10) with a one-sentence rationale citing what was said
+- sentimentScore/-Label: the counterpart's sentiment (the client's when
+  present; the room's overall for internal). USE THE FULL RANGE — 0.0 is
+  genuinely neutral; do not cluster at 0.7-0.9. A merely-fine meeting is
+  ~0.1-0.3; reserve >0.6 for real enthusiasm heard in the words.
+- satisfactionScore: ONLY for client/sales meetings, else -1. CALIBRATION
+  BANDS — use them, do not default to 7-9:
+    9-10: explicit praise PLUS renewal/expansion/referral signals
+    7-8:  clear stated positive evidence about the work
+    5-6:  neutral or no direct evidence either way
+    3-4:  stated friction, disappointment, or repeated pushback
+    0-2:  explicit dissatisfaction or churn threat
+  satisfactionRationale must cite the evidence (or say "not a client
+  meeting" / "no direct evidence — defaulted to neutral").
 - lessons: what to do differently next delivery (skip if none earned)
 - actionItems: open commitments, with owner names when stated
 - risks: churn, scope, or relationship risks actually heard
-- strengths: what went well — client praise, wins, things that landed
+- strengths: what went well — praise, wins, things that landed
 - weaknesses: what fell short — friction, complaints, delivery gaps
 
 Be honest — a tense meeting scores low. Never invent content that is not in
@@ -114,6 +133,10 @@ def analyze_meeting(meeting_id: int, feedback: str = "") -> dict:
     parsed.setdefault("risks", [])
     parsed.setdefault("strengths", [])
     parsed.setdefault("weaknesses", [])
+    mt = str(parsed.get("meetingType") or "other").lower()
+    parsed["meetingType"] = mt if mt in ("client", "sales", "internal", "other") else "other"
+    if parsed["meetingType"] in ("internal", "other"):
+        parsed["satisfactionScore"] = -1
     store.save_analysis(meeting_id, parsed)
     return parsed
 
@@ -126,12 +149,17 @@ def dashboard_rollup(meetings: Optional[list[dict]] = None) -> dict:
     if n == 0:
         return {"analyzed": 0, "total": len(ms)}
     sent = [float(m["analysis"].get("sentimentScore", 0)) for m in analyzed]
-    sat = [float(m["analysis"].get("satisfactionScore", 0)) for m in analyzed]
+    sat_ms = [m for m in analyzed
+              if float(m["analysis"].get("satisfactionScore", -1)) >= 0]
+    sat = [float(m["analysis"]["satisfactionScore"]) for m in sat_ms]
     # newest-first lists arrive sorted by held_at desc; trends read old->new
     trend = [{"heldAt": m.get("heldAt") or m.get("createdAt"),
               "title": m["title"],
+              "type": (m["analysis"].get("meetingType") or "other"),
               "sentiment": float(m["analysis"].get("sentimentScore", 0)),
-              "satisfaction": float(m["analysis"].get("satisfactionScore", 0))}
+              "satisfaction": (float(m["analysis"]["satisfactionScore"])
+                               if float(m["analysis"].get("satisfactionScore", -1)) >= 0
+                               else None)}
              for m in reversed(analyzed)]
     lessons, insights, risks = [], [], []
     strengths, weaknesses = [], []
@@ -146,9 +174,11 @@ def dashboard_rollup(meetings: Optional[list[dict]] = None) -> dict:
         "analyzed": n,
         "total": len(ms),
         "avgSentiment": sum(sent) / n,
-        "avgSatisfaction": sum(sat) / n,
+        "avgSatisfaction": (sum(sat) / len(sat)) if sat else None,
+        "satisfactionMeetings": len(sat),
         "latestSentiment": sent[0],
-        "latestSatisfaction": sat[0],
+        "latestSatisfaction": (float(sat_ms[0]["analysis"]["satisfactionScore"])
+                               if sat_ms else None),
         "trend": trend,
         "lessons": lessons[:40],
         "insights": insights[:60],
@@ -210,7 +240,7 @@ def _write_batch(st: dict) -> None:
     tmp.replace(p)
 
 
-def _batch_worker(ids: list, titles: dict) -> None:
+def _batch_worker(ids: list, titles: dict, force: bool = False) -> None:
     done = 0
     failed = 0
     for mid in ids:
@@ -223,7 +253,7 @@ def _batch_worker(ids: list, titles: dict) -> None:
                       "failed": failed, "current": titles.get(mid, "")})
         try:
             m = store.get_meeting(mid, with_transcript=False)
-            if m and not m.get("analysis"):     # still unanalyzed?
+            if m and (force or not m.get("analysis")):
                 analyze_meeting(mid)
         except Exception:
             failed += 1
@@ -232,13 +262,13 @@ def _batch_worker(ids: list, titles: dict) -> None:
                   "failed": failed, "finishedAt": _time.time()})
 
 
-def start_batch() -> dict:
+def start_batch(force: bool = False) -> dict:
     with _BATCH_LOCK:
         st = batch_status()
         if st.get("running"):
             raise RuntimeError("an Analyze-all run is already in progress")
-        todo = [m for m in store.list_meetings() if not m.get("analysis")
-                and ((m.get("transcript") is not None) or True)]
+        todo = [m for m in store.list_meetings()
+                if force or not m.get("analysis")]
         # only meetings with content can be analyzed; filter via detail fetch
         ids = []
         titles = {}
@@ -253,8 +283,8 @@ def start_batch() -> dict:
                                "transcript is already done")
         _write_batch({"running": True, "total": len(ids), "done": 0,
                       "failed": 0, "current": titles[ids[0]],
-                      "startedAt": _time.time()})
-        t = threading.Thread(target=_batch_worker, args=(ids, titles),
+                      "force": bool(force), "startedAt": _time.time()})
+        t = threading.Thread(target=_batch_worker, args=(ids, titles, force),
                              daemon=True)
         t.start()
         return {"started": True, "total": len(ids)}

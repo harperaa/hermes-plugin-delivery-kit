@@ -191,11 +191,13 @@ def test_analysis_and_rollup(home, monkeypatch):
                                  "Client: I'm frustrated with the delays")
 
     fake = {
-        m1: {"overview": "Happy client.", "insights": ["They want more scope"],
+        m1: {"meetingType": "client",
+             "overview": "Happy client.", "insights": ["They want more scope"],
              "sentimentScore": 0.8, "sentimentLabel": "positive",
              "satisfactionScore": 9, "satisfactionRationale": "said 'great work'",
              "lessons": [], "actionItems": ["send invoice"], "risks": []},
-        m2: {"overview": "Tense call.", "insights": ["Delays hurt trust"],
+        m2: {"meetingType": "client",
+             "overview": "Tense call.", "insights": ["Delays hurt trust"],
              "sentimentScore": -0.5, "sentimentLabel": "negative",
              "satisfactionScore": 3, "satisfactionRationale": "said 'frustrated'",
              "lessons": ["Communicate slips early"], "actionItems": [],
@@ -238,6 +240,53 @@ def test_analysis_and_rollup(home, monkeypatch):
     found = json.loads(analysis.tool_meeting_search({"query": "frustrated"}))
     assert found["count"] == 1
     assert found["meetings"][0]["analysis"]["sentimentLabel"] == "negative"
+
+
+def test_meeting_type_gates_satisfaction(home, monkeypatch):
+    mid, _ = store.upsert_meeting("import", None, "Team sync", 100.0, None,
+                                  "Al: standup stuff")
+
+    class FakeRes:
+        parsed = {"meetingType": "Internal", "overview": "standup",
+                  "insights": [], "sentimentScore": 0.7,
+                  "sentimentLabel": "positive",
+                  "satisfactionScore": 8,          # model forgot the sentinel
+                  "satisfactionRationale": "friendly"}
+
+    class FakeLlm:
+        def complete_structured(self, **kw):
+            return FakeRes()
+
+    monkeypatch.setattr(analysis, "_llm", lambda: FakeLlm())
+    out = analysis.analyze_meeting(mid)
+    assert out["meetingType"] == "internal"        # normalized lowercase
+    assert out["satisfactionScore"] == -1          # forced sentinel for internal
+
+    roll = analysis.dashboard_rollup()
+    assert roll["avgSatisfaction"] is None         # no client meetings
+    assert roll["satisfactionMeetings"] == 0
+    assert roll["trend"][0]["satisfaction"] is None
+    assert roll["trend"][0]["type"] == "internal"
+
+
+def test_rollup_mixed_types_averages_clients_only(home):
+    c, _ = store.upsert_meeting("import", None, "Client call", 100.0, None, "t")
+    i, _ = store.upsert_meeting("import", None, "Standup", 200.0, None, "t")
+    store.save_analysis(c, {"meetingType": "client", "overview": "x",
+                            "insights": [], "sentimentScore": 0.5,
+                            "sentimentLabel": "positive",
+                            "satisfactionScore": 6,
+                            "satisfactionRationale": "r"})
+    store.save_analysis(i, {"meetingType": "internal", "overview": "y",
+                            "insights": [], "sentimentScore": 0.9,
+                            "sentimentLabel": "positive",
+                            "satisfactionScore": -1,
+                            "satisfactionRationale": "not a client meeting"})
+    roll = analysis.dashboard_rollup()
+    assert roll["analyzed"] == 2
+    assert roll["avgSatisfaction"] == 6.0          # internal excluded
+    assert roll["satisfactionMeetings"] == 1
+    assert abs(roll["avgSentiment"] - 0.7) < 1e-9  # sentiment includes both
 
 
 def test_batch_skips_analyzed_and_persists(home, monkeypatch):
