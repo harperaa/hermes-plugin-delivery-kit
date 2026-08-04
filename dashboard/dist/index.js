@@ -438,6 +438,30 @@
     var noticeSt = useState(null);
     var notice = noticeSt[0], setNotice = noticeSt[1];
 
+    var syncable = (props.providers || []).filter(function (p) {
+      return p.canSync && p.connected;
+    });
+    var anySyncable = (props.providers || []).some(function (p) { return p.canSync; });
+
+    function sync(providerId) {
+      setBusy("sync"); setNotice(null);
+      postJSON("/sync", { provider: providerId })
+        .then(function (r) {
+          props.onState(r.state);
+          setNotice("Synced " + r.fetched + " meeting(s) from " + r.provider +
+            ", " + r.new + " new.");
+        })
+        .catch(function (e) { setNotice(String((e && e.message) || e)); })
+        .finally(function () { setBusy(null); });
+    }
+
+    function analyzeAll() {
+      setBusy("all"); setNotice(null);
+      postJSON("/analyze-all", {})
+        .then(function (r) { props.onState(r.state); })
+        .catch(function (e) { setNotice(String((e && e.message) || e)); })
+        .finally(function () { setBusy(null); });
+    }
 
     function stopBatch() {
       postJSON("/analyze-all/stop", {})
