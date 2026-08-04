@@ -551,12 +551,14 @@
     var batch = props.batch || {};
     var batchRunning = !!batch.running;
 
-    var filterBar = h("div", { className: "dk-filterbar" },
-      h("input", {
-        className: "dk-input dk-search", type: "search", value: q,
-        placeholder: "🔎 Search meetings — title, transcript, analysis…",
-        onChange: function (e) { runSearch(e.target.value); },
-      }),
+    var filterBar = h(React.Fragment, null,
+      h("div", { className: "dk-filterbar" },
+        h("input", {
+          className: "dk-input dk-search", type: "search", value: q,
+          placeholder: "🔎 Search meetings — title, transcript, analysis…",
+          onChange: function (e) { runSearch(e.target.value); },
+        })),
+      h("div", { className: "dk-filterbar" },
       TYPES.map(function (t) {
         var n = props.meetings.filter(function (m) { return mType(m) === t[0]; }).length;
         if (!n) return null;
@@ -581,7 +583,7 @@
       filter
         ? h("button", { className: "dk-btn", style: { fontSize: 12 },
                         onClick: function () { setFilter(null); } }, "✕ clear")
-        : null);
+        : null));
 
     if (filter) {
       var items = catItems(filter);
