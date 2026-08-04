@@ -100,6 +100,85 @@ def test_fireflies_fetch_normalizes(home, monkeypatch):
     assert "Went well" in m["providerSummary"]
 
 
+def test_fathom_fetch_normalizes(home, monkeypatch):
+    providers.store_key("FATHOM_API_KEY", "fa-key")
+    payload = {"items": [{
+        "id": 77, "title": "Fathom call",
+        "recording_start_time": "2026-08-01T15:00:00Z",
+        "recording_end_time": "2026-08-01T15:30:00Z",
+        "transcript": [{"speaker": {"display_name": "Al"}, "text": "hello"}],
+        "summary": "quick sync",
+    }]}
+    captured = {}
+
+    class FakeResp:
+        def read(self):
+            return json.dumps(payload).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_open(req, timeout=0):
+        captured["key"] = req.get_header("X-api-key")
+        captured["url"] = req.full_url
+        return FakeResp()
+
+    monkeypatch.setattr(providers.urllib.request, "urlopen", fake_open)
+    out = providers.fathom_fetch()
+    assert captured["key"] == "fa-key"
+    assert "include_transcript=true" in captured["url"]
+    m = out[0]
+    assert m["title"] == "Fathom call" and m["durationMin"] == 30.0
+    assert "Al: hello" in m["transcript"]
+
+
+def test_tldv_fetch_normalizes(home, monkeypatch):
+    providers.store_key("TLDV_API_KEY", "tl-key")
+    responses = {
+        "meetings": {"results": [{"id": "m9", "name": "tldv call",
+                                  "happenedAt": "2026-08-02T10:00:00Z",
+                                  "duration": 25}]},
+        "transcript": {"data": [{"speaker": "Client", "text": "sounds good"}]},
+    }
+
+    class FakeResp:
+        def __init__(self, body):
+            self.body = body
+
+        def read(self):
+            return json.dumps(self.body).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_open(req, timeout=0):
+        body = (responses["transcript"] if req.full_url.endswith("/transcript")
+                else responses["meetings"])
+        return FakeResp(body)
+
+    monkeypatch.setattr(providers.urllib.request, "urlopen", fake_open)
+    out = providers.tldv_fetch()
+    assert out[0]["title"] == "tldv call"
+    assert "Client: sounds good" in out[0]["transcript"]
+
+
+def test_sync_dispatcher(home):
+    with pytest.raises(RuntimeError):
+        providers.sync_provider("plaud")       # no direct sync yet
+    with pytest.raises(RuntimeError):
+        providers.sync_provider("nonsense")
+    assert set(providers.SYNCERS) == {"fireflies", "fathom", "grain", "tldv"}
+    # catalog and syncers agree on canSync
+    for p in providers.PROVIDERS:
+        assert bool(p.get("canSync")) == (p["id"] in providers.SYNCERS)
+
+
 def test_fireflies_requires_key(home):
     with pytest.raises(RuntimeError):
         providers.fireflies_fetch()

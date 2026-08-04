@@ -63,6 +63,10 @@ class AnalyzeBody(BaseModel):
     meetingId: int = 0
 
 
+class SyncBody(BaseModel):
+    provider: str = "fireflies"
+
+
 def _public_state() -> dict:
     meetings = store.list_meetings()
     return {
@@ -97,21 +101,23 @@ def connect(body: ConnectBody):
 
 
 @router.post("/sync")
-def sync():
+def sync(body: SyncBody):
+    provider_id = (body.provider or "fireflies").strip()
     try:
-        fetched = providers.fireflies_fetch(limit=25)
+        fetched = providers.sync_provider(provider_id, limit=25)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Fireflies sync failed: {exc}")
+        raise HTTPException(status_code=502,
+                            detail=f"{provider_id} sync failed: {exc}")
     created = 0
     for t in fetched:
         _, was_new = store.upsert_meeting(
-            "fireflies", t["externalId"], t["title"], t["heldAt"],
+            provider_id, t["externalId"], t["title"], t["heldAt"],
             t["durationMin"], t["transcript"], t["providerSummary"])
         created += 1 if was_new else 0
-    return {"ok": True, "fetched": len(fetched), "new": created,
-            "state": _public_state()}
+    return {"ok": True, "provider": provider_id, "fetched": len(fetched),
+            "new": created, "state": _public_state()}
 
 
 @router.post("/import")

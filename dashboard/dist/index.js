@@ -389,14 +389,18 @@
     var expandSt = useState(null);
     var expanded = expandSt[0], setExpanded = expandSt[1];
 
-    var ff = (props.providers || []).find(function (p) { return p.id === "fireflies"; });
+    var syncable = (props.providers || []).filter(function (p) {
+      return p.canSync && p.connected;
+    });
+    var anySyncable = (props.providers || []).some(function (p) { return p.canSync; });
 
-    function sync() {
+    function sync(providerId) {
       setBusy("sync"); setNotice(null);
-      postJSON("/sync", {})
+      postJSON("/sync", { provider: providerId })
         .then(function (r) {
           props.onState(r.state);
-          setNotice("Synced " + r.fetched + " meeting(s), " + r.new + " new.");
+          setNotice("Synced " + r.fetched + " meeting(s) from " + r.provider +
+            ", " + r.new + " new.");
         })
         .catch(function (e) { setNotice(String((e && e.message) || e)); })
         .finally(function () { setBusy(null); });
@@ -431,12 +435,19 @@
     return h("div", null,
       h("div", { className: "dk-card", style: { display: "flex", gap: 10,
                  alignItems: "center", flexWrap: "wrap" } },
-        h("button", { className: "dk-btn dk-btn-primary",
-                      disabled: busy !== null || !(ff && ff.connected),
-                      title: ff && ff.connected ? "Pull latest transcripts from Fireflies"
-                        : "Connect Fireflies first (button above)",
-                      onClick: sync },
-          busy === "sync" ? "Syncing…" : "⟳ Sync Fireflies"),
+        syncable.length
+          ? syncable.map(function (p) {
+              return h("button", { key: p.id, className: "dk-btn dk-btn-primary",
+                            disabled: busy !== null,
+                            title: "Pull latest transcripts from " + p.label,
+                            onClick: function () { sync(p.id); } },
+                busy === "sync" ? "Syncing…" : "⟳ Sync " + p.label);
+            })
+          : h("button", { className: "dk-btn dk-btn-primary", disabled: true,
+                title: anySyncable
+                  ? "Connect a provider above (Fireflies, Fathom, Grain, tl;dv) to sync"
+                  : "" },
+              "⟳ Sync"),
         h("button", { className: "dk-btn", disabled: busy !== null,
                       onClick: props.onImport }, "＋ Import transcript"),
         unanalyzed > 0

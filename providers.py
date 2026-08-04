@@ -15,69 +15,124 @@ from typing import Optional
 
 FIREFLIES_URL = "https://api.fireflies.ai/graphql"
 
-# Provider catalog — id, label, env var (None = manual/import only), and the
-# key-retrieval instructions shown in the connect modal.
+# Provider catalog — id, label, env var (None = manual/import only),
+# canSync (a live fetcher exists below), and the key-retrieval instructions
+# shown in the connect modal. API facts verified 2026-08-04.
 PROVIDERS = [
     {
         "id": "fireflies",
         "label": "Fireflies.ai",
         "env": "FIREFLIES_API_KEY",
         "default": True,
+        "canSync": True,
         "instructions": (
             "1. Sign in at app.fireflies.ai\n"
             "2. Open Settings → Developer Settings\n"
             "3. Copy your API key\n"
-            "4. Paste it below and hit Save — syncing starts immediately."),
+            "4. Paste it below and hit Save — then Sync pulls your meetings."),
         "url": "https://app.fireflies.ai/settings",
     },
     {
         "id": "fathom",
         "label": "Fathom",
         "env": "FATHOM_API_KEY",
+        "canSync": True,
         "instructions": (
             "1. Sign in at fathom.video\n"
-            "2. Settings → API (Team plans) → generate a key\n"
-            "3. Paste it below and Save. Fathom sync lands in a coming "
-            "update — the key is stored now; meanwhile use Import to paste "
-            "call summaries."),
+            "2. Settings → API → generate an API key\n"
+            "3. Paste it below and Save — then Sync pulls your meetings "
+            "(transcripts included, 60 calls/min limit)."),
         "url": "https://fathom.video/settings",
     },
     {
         "id": "grain",
         "label": "Grain",
         "env": "GRAIN_API_KEY",
+        "canSync": True,
         "instructions": (
             "1. Sign in at grain.com\n"
-            "2. Settings → Integrations → Personal Access Token\n"
-            "3. Paste it below and Save. Grain sync lands in a coming update; "
-            "meanwhile use Import."),
+            "2. Settings → Integrations → Public API → generate a token\n"
+            "3. Paste it below and Save — then Sync pulls your recordings "
+            "and transcripts."),
         "url": "https://grain.com/app/settings",
     },
     {
         "id": "tldv",
         "label": "tl;dv",
         "env": "TLDV_API_KEY",
+        "canSync": True,
         "instructions": (
             "1. Sign in at tldv.io\n"
-            "2. Settings → API (Business plan) → create key\n"
-            "3. Paste it below and Save. tl;dv sync lands in a coming update; "
-            "meanwhile use Import."),
+            "2. Settings → API (Business plan) → create an API key\n"
+            "3. Paste it below and Save — then Sync pulls your meetings and "
+            "transcripts. Note: API export requires the organizer's plan to "
+            "allow it."),
         "url": "https://tldv.io",
+    },
+    {
+        "id": "plaud",
+        "label": "Plaud",
+        "env": "PLAUD_API_KEY",
+        "canSync": False,
+        "instructions": (
+            "Plaud (Note/NotePin recorders) now has a developer platform: "
+            "docs.plaud.ai — transcripts, summaries, and metadata as JSON.\n"
+            "1. Request API access at docs.plaud.ai (developer platform)\n"
+            "2. Paste your key below and Save — direct sync lands in a "
+            "coming update.\n"
+            "Today: route Plaud → Zapier → webhook, or export a transcript "
+            "from the Plaud app and paste it via Import."),
+        "url": "https://docs.plaud.ai/overview",
+    },
+    {
+        "id": "avoma",
+        "label": "Avoma",
+        "env": "AVOMA_API_KEY",
+        "canSync": False,
+        "instructions": (
+            "1. Sign in at avoma.com\n"
+            "2. Settings → API → generate a key (dev.avoma.com has the docs)\n"
+            "3. Paste it below and Save — direct sync lands in a coming "
+            "update; meanwhile use Import."),
+        "url": "https://help.avoma.com/api-documentation",
     },
     {
         "id": "otter",
         "label": "Otter.ai",
         "env": None,
+        "canSync": False,
         "instructions": (
-            "Otter has no public API. Export any conversation "
-            "(⋯ → Export → Text) and paste it via the Import button — "
-            "analysis works identically."),
+            "Otter's public API is Enterprise-only (enabled by your Otter "
+            "account manager). For everyone else: export any conversation "
+            "(⋯ → Export → Text) and paste it via Import — analysis works "
+            "identically."),
         "url": "https://otter.ai",
+    },
+    {
+        "id": "readai",
+        "label": "Read.ai",
+        "env": None,
+        "canSync": False,
+        "instructions": (
+            "Read.ai integrates via webhooks/Zapier rather than a pull API. "
+            "Export or copy the meeting report and paste it via Import."),
+        "url": "https://www.read.ai",
+    },
+    {
+        "id": "granola",
+        "label": "Granola",
+        "env": None,
+        "canSync": False,
+        "instructions": (
+            "Granola is local-first with no public API. Copy a note/transcript "
+            "from the app and paste it via Import."),
+        "url": "https://www.granola.ai",
     },
     {
         "id": "zoom",
         "label": "Zoom",
         "env": None,
+        "canSync": False,
         "instructions": (
             "Zoom cloud recordings include a transcript (.vtt). Download it "
             "from the recording page and paste via Import — analysis works "
@@ -136,6 +191,7 @@ def provider_status() -> list[dict]:
         out.append({
             "id": p["id"], "label": p["label"], "env": p["env"],
             "default": bool(p.get("default")),
+            "canSync": bool(p.get("canSync")),
             "connected": bool(p["env"] and get_key(p["env"])),
             "instructions": p["instructions"], "url": p["url"],
         })
@@ -208,3 +264,157 @@ def fireflies_fetch(limit: int = 25) -> list[dict]:
             "providerSummary": summary_text,
         })
     return out
+
+
+def _http_json(url: str, headers: dict, method: str = "GET",
+               body: Optional[dict] = None) -> dict:
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method,
+                                 headers={"Content-Type": "application/json",
+                                          **headers})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return json.loads(resp.read().decode())
+
+
+def _iso_to_epoch(value) -> Optional[float]:
+    if not value:
+        return None
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Fathom sync — GET api.fathom.ai/external/v1/meetings?include_transcript=true
+# (X-Api-Key header; verified 2026-08-04)
+# ---------------------------------------------------------------------------
+
+def fathom_fetch(limit: int = 15) -> list[dict]:
+    key = get_key("FATHOM_API_KEY")
+    if not key:
+        raise RuntimeError("Fathom is not connected — add your API key first")
+    payload = _http_json(
+        "https://api.fathom.ai/external/v1/meetings"
+        f"?include_transcript=true&limit={max(1, min(limit, 25))}",
+        {"X-Api-Key": key})
+    out = []
+    for m in (payload.get("items") or [])[:limit]:
+        lines = []
+        for seg in m.get("transcript") or []:
+            speaker = seg.get("speaker") or {}
+            name = (speaker.get("display_name") if isinstance(speaker, dict)
+                    else str(speaker)) or "Speaker"
+            lines.append(f"{name}: {seg.get('text') or ''}")
+        start = _iso_to_epoch(m.get("recording_start_time")
+                              or m.get("scheduled_start_time"))
+        end = _iso_to_epoch(m.get("recording_end_time")
+                            or m.get("scheduled_end_time"))
+        duration = (end - start) / 60.0 if start and end and end > start else None
+        out.append({
+            "externalId": str(m.get("id") or m.get("recording_id")
+                              or m.get("url") or m.get("title")),
+            "title": m.get("title") or m.get("meeting_title") or "Untitled meeting",
+            "heldAt": start,
+            "durationMin": duration,
+            "transcript": "\n".join(lines),
+            "providerSummary": str(m.get("summary") or ""),
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Grain sync — POST /_/public-api/v2/recordings (list) then GET
+# /recordings/:id/transcript (Bearer + Public-Api-Version; verified 2026-08-04)
+# ---------------------------------------------------------------------------
+
+_GRAIN_BASE = "https://api.grain.com/_/public-api"
+_GRAIN_HEADERS = lambda key: {"Authorization": f"Bearer {key}",
+                              "Public-Api-Version": "2025-10-31"}
+
+
+def grain_fetch(limit: int = 10) -> list[dict]:
+    key = get_key("GRAIN_API_KEY")
+    if not key:
+        raise RuntimeError("Grain is not connected — add your token first")
+    listing = _http_json(f"{_GRAIN_BASE}/v2/recordings",
+                         _GRAIN_HEADERS(key), method="POST", body={})
+    recs = listing.get("recordings") or listing.get("items") or []
+    out = []
+    for r in recs[:max(1, min(limit, 15))]:
+        rid = r.get("id")
+        transcript = ""
+        try:
+            t = _http_json(f"{_GRAIN_BASE}/v2/recordings/{rid}/transcript",
+                           _GRAIN_HEADERS(key))
+            segs = t.get("transcript") or t.get("segments") or t or []
+            if isinstance(segs, list):
+                transcript = "\n".join(
+                    f"{seg.get('speaker') or 'Speaker'}: {seg.get('text') or ''}"
+                    for seg in segs if isinstance(seg, dict))
+        except Exception:
+            pass
+        out.append({
+            "externalId": str(rid),
+            "title": r.get("title") or "Untitled recording",
+            "heldAt": _iso_to_epoch(r.get("start_datetime")),
+            "durationMin": None,
+            "transcript": transcript,
+            "providerSummary": str(r.get("summary") or ""),
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# tl;dv sync — GET pasta.tldv.io/v1alpha1/meetings then /meetings/{id}/
+# transcript (x-api-key header; verified 2026-08-04)
+# ---------------------------------------------------------------------------
+
+_TLDV_BASE = "https://pasta.tldv.io/v1alpha1"
+
+
+def tldv_fetch(limit: int = 10) -> list[dict]:
+    key = get_key("TLDV_API_KEY")
+    if not key:
+        raise RuntimeError("tl;dv is not connected — add your API key first")
+    listing = _http_json(f"{_TLDV_BASE}/meetings", {"x-api-key": key})
+    meetings = listing.get("results") or listing.get("meetings") or []
+    out = []
+    for m in meetings[:max(1, min(limit, 15))]:
+        mid = m.get("id")
+        transcript = ""
+        try:
+            t = _http_json(f"{_TLDV_BASE}/meetings/{mid}/transcript",
+                           {"x-api-key": key})
+            segs = t.get("data") or t.get("transcript") or []
+            if isinstance(segs, list):
+                transcript = "\n".join(
+                    f"{seg.get('speaker') or 'Speaker'}: {seg.get('text') or ''}"
+                    for seg in segs if isinstance(seg, dict))
+        except Exception:
+            pass
+        out.append({
+            "externalId": str(mid),
+            "title": m.get("name") or "Untitled meeting",
+            "heldAt": _iso_to_epoch(m.get("happenedAt")),
+            "durationMin": m.get("duration"),
+            "transcript": transcript,
+            "providerSummary": "",
+        })
+    return out
+
+
+SYNCERS = {
+    "fireflies": fireflies_fetch,
+    "fathom": fathom_fetch,
+    "grain": grain_fetch,
+    "tldv": tldv_fetch,
+}
+
+
+def sync_provider(provider_id: str, limit: int = 25) -> list[dict]:
+    fn = SYNCERS.get(provider_id)
+    if fn is None:
+        raise RuntimeError(f"{provider_id} has no direct sync yet — use Import")
+    return fn(limit)
