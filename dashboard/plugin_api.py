@@ -44,6 +44,7 @@ if _PKG not in sys.modules:
 store = importlib.import_module(f"{_PKG}.store")
 providers = importlib.import_module(f"{_PKG}.providers")
 analysis = importlib.import_module(f"{_PKG}.analysis")
+schedule = importlib.import_module(f"{_PKG}.schedule")
 
 router = APIRouter()
 
@@ -68,6 +69,11 @@ class SyncBody(BaseModel):
     provider: str = "fireflies"
 
 
+class AutosyncBody(BaseModel):
+    tzOffsetMinutes: int | None = None
+    enabled: bool | None = None
+
+
 def _public_state() -> dict:
     meetings = store.list_meetings()
     return {
@@ -78,6 +84,7 @@ def _public_state() -> dict:
         ],
         "dashboard": analysis.dashboard_rollup(meetings),
         "batch": analysis.batch_status(),
+        "autosync": schedule.autosync_status(),
     }
 
 
@@ -120,6 +127,21 @@ def sync(body: SyncBody):
         created += 1 if was_new else 0
     return {"ok": True, "provider": provider_id, "fetched": len(fetched),
             "new": created, "state": _public_state()}
+
+
+@router.post("/autosync")
+def autosync(body: AutosyncBody):
+    """Create/update the hourly auto-sync cron job (08:00-19:00 user-local).
+
+    The dashboard calls this on load with the browser's tz offset so the
+    window tracks the user's clock; the toggle sends `enabled`.
+    """
+    try:
+        info = schedule.ensure_sync_job(body.tzOffsetMinutes, body.enabled)
+    except Exception as exc:
+        raise HTTPException(status_code=500,
+                            detail=f"auto-sync setup failed: {exc}")
+    return {"ok": True, "autosync": info}
 
 
 @router.post("/import")

@@ -219,6 +219,103 @@
     if (v > -0.6) return "🙁";
     return "😠";
   }
+  // analysis list items are {text, quote}; pre-evidence analyses stored plain strings
+  function itemText(x) { return typeof x === "string" ? x : (x && x.text) || ""; }
+  function itemQuote(x) { return (x && typeof x === "object" && x.quote) || ""; }
+
+  // -------------------------------------------------------------------------
+  // Evidence modal — full transcript with the supporting quote(s) highlighted
+  // -------------------------------------------------------------------------
+  function EvidenceModal(props) {
+    var ev = props.ev;                // {meetingId, meetingTitle, quotes, label}
+    var txSt = useState(null);
+    var tx = txSt[0], setTx = txSt[1];
+    var errSt = useState(null);
+    var err = errSt[0], setErr = errSt[1];
+    var boxRef = useRef(null);
+
+    useEffect(function () {
+      var alive = true;
+      api("/meeting/" + encodeURIComponent(ev.meetingId))
+        .then(function (d) { if (alive) setTx(d.transcript || ""); })
+        .catch(function (e) { if (alive) setErr(String((e && e.message) || e)); });
+      return function () { alive = false; };
+    }, [ev.meetingId]);
+
+    function ranges(text, quotes) {
+      var lower = text.toLowerCase();
+      var out = [];
+      (quotes || []).forEach(function (qq) {
+        var needle = String(qq || "").trim().toLowerCase();
+        if (needle.length < 8) return;
+        var found = false, at = 0;
+        while ((at = lower.indexOf(needle, at)) !== -1) {
+          out.push([at, at + needle.length]); found = true;
+          at += needle.length;
+        }
+        if (!found && needle.length > 40) {   // quote not verbatim — try its head
+          var p = lower.indexOf(needle.slice(0, 40));
+          if (p !== -1) out.push([p, p + 40]);
+        }
+      });
+      out.sort(function (a, b) { return a[0] - b[0]; });
+      var merged = [];
+      out.forEach(function (r) {
+        var last = merged[merged.length - 1];
+        if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
+        else merged.push([r[0], r[1]]);
+      });
+      return merged;
+    }
+
+    var rs = tx != null ? ranges(tx, ev.quotes) : [];
+
+    useEffect(function () {
+      if (tx == null || !boxRef.current) return;
+      var pre = boxRef.current.querySelector(".dk-transcript");
+      var mark = pre && pre.querySelector(".dk-ev-mark");
+      if (pre && mark) pre.scrollTop = Math.max(0, mark.offsetTop - pre.clientHeight / 3);
+    }, [tx]);
+
+    var body;
+    if (err) body = h("div", { className: "dk-err" }, err);
+    else if (tx == null) body = h("div", { style: { color: MUTED, fontSize: 13 } },
+      "Loading transcript…");
+    else {
+      var parts = [], pos = 0;
+      rs.forEach(function (r, i) {
+        if (r[0] > pos) parts.push(tx.slice(pos, r[0]));
+        parts.push(h("mark", { key: "m" + i, className: "dk-ev-mark" },
+          tx.slice(r[0], r[1])));
+        pos = r[1];
+      });
+      parts.push(tx.slice(pos));
+      body = h(React.Fragment, null,
+        (ev.quotes || []).filter(Boolean).length && !rs.length
+          ? h("div", { style: { color: MUTED, fontSize: 12, margin: "0 0 8px" } },
+              "Couldn't locate the quote verbatim in the transcript — showing it " +
+              "above and the full transcript below.")
+          : null,
+        h("pre", { className: "dk-transcript" }, parts));
+    }
+
+    return h("div", { className: "dk-modal", onClick: function (e) {
+          if (e.target === e.currentTarget) props.onClose();
+        } },
+      h("div", { className: "dk-modal-box", style: { maxWidth: 780 }, ref: boxRef },
+        h("div", { style: { fontWeight: 800, fontSize: 15, marginBottom: 2 } },
+          "📜 " + ev.meetingTitle),
+        ev.label
+          ? h("div", { style: { color: MUTED, fontSize: 12.5, marginBottom: 8 } },
+              ev.label)
+          : null,
+        (ev.quotes || []).filter(Boolean).map(function (qq, i) {
+          return h("blockquote", { key: i, className: "dk-ev-quote" }, "“" + qq + "”");
+        }),
+        body,
+        h("div", { className: "dk-modal-row" },
+          h("button", { className: "dk-btn", onClick: props.onClose }, "Close"))));
+  }
 
   // -------------------------------------------------------------------------
   // Connect bar — provider buttons at the top; modal stores the key inline
@@ -370,7 +467,17 @@
         h("div", { style: { fontWeight: 800, marginBottom: 8 } }, icon + " " + title),
         h("ul", { className: "dk-list " + (cls || "") },
           items.map(function (it, i) {
-            return h("li", { key: i },
+            var clickable = props.onEvidence && it.meetingId;
+            return h("li", {
+                key: i,
+                className: clickable ? "dk-ev-item" : null,
+                title: clickable ? "Show the supporting transcript excerpt" : null,
+                onClick: clickable ? function () {
+                  props.onEvidence({ meetingId: it.meetingId, meetingTitle: it.meeting,
+                    quotes: it.quote ? [it.quote] : [],
+                    label: title.replace(/ —.*$/, "") + ": " + it.text });
+                } : null,
+              },
               it.text,
               h("span", { className: "dk-attrib" },
                 " — " + it.meeting + (it.heldAt ? " · " + fmtWhen(it.heldAt) : "")));
@@ -409,21 +516,42 @@
   // -------------------------------------------------------------------------
   function AnalysisView(props) {
     var a = props.analysis;
+    function evClick(quotes, label) {
+      if (!props.onEvidence || !props.meetingId) return null;
+      return function (e) {
+        e.stopPropagation();
+        props.onEvidence({ meetingId: props.meetingId,
+          meetingTitle: props.meetingTitle, quotes: quotes, label: label });
+      };
+    }
     function list(title, items) {
       if (!items || !items.length) return null;
       return h("div", { style: { marginTop: 8 } },
         h("div", { style: { fontSize: 11.5, fontWeight: 700, color: MUTED,
                             textTransform: "uppercase", letterSpacing: "0.06em" } }, title),
         h("ul", { className: "dk-list" }, items.map(function (x, i) {
-          return h("li", { key: i }, x);
+          var quote = itemQuote(x);
+          var onEv = evClick(quote ? [quote] : [], title + ": " + itemText(x));
+          return h("li", {
+            key: i,
+            className: onEv ? "dk-ev-item" : null,
+            title: onEv ? (quote ? "Show the supporting transcript excerpt"
+                                 : "Show the transcript") : null,
+            onClick: onEv,
+          }, itemText(x));
         })));
     }
+    var badgeEv = evClick(a.sentimentQuotes || [],
+      "Sentiment evidence — " + a.sentimentLabel + " · " +
+      sentimentPct(a.sentimentScore) + "%");
     return h("div", { className: "dk-analysis" },
       h("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 6 } },
         a.meetingType
           ? h("span", { className: "dk-chip dk-chip-type" }, a.meetingType)
           : null,
-        h("span", { className: "dk-chip dk-chip-fill",
+        h("span", { className: "dk-chip dk-chip-fill" + (badgeEv ? " dk-ev-item" : ""),
+                    title: badgeEv ? "Show the transcript lines behind this score" : null,
+                    onClick: badgeEv,
                     style: { background: scaleColor(sentimentPct(a.sentimentScore) / 100),
                              borderColor: scaleColor(sentimentPct(a.sentimentScore) / 100) } },
           sentimentFace(a.sentimentScore) + " sentiment " + a.sentimentLabel +
@@ -474,6 +602,15 @@
       postJSON("/analyze-all/stop", {})
         .then(function () { api("/state").then(props.onState); })
         .catch(function () {});
+    }
+
+    var auto = props.autosync || {};
+    function toggleAutosync() {
+      postJSON("/autosync", { enabled: !auto.enabled,
+                              tzOffsetMinutes: new Date().getTimezoneOffset() })
+        .then(function () { return api("/state"); })
+        .then(props.onState)
+        .catch(function (e) { setNotice(String((e && e.message) || e)); });
     }
 
     var unanalyzed = (props.meetings || []).filter(function (m) {
@@ -528,6 +665,16 @@
             "Last run: " + batch.failed + " of " + batch.total + " failed — retry with ✨")
         : null,
       h("span", { style: { flex: 1 } }),
+      h("button", {
+          className: "dk-tab" + (auto.enabled ? " dk-tab-on" : ""),
+          style: { fontSize: 12 },
+          title: "Auto-syncs connected providers every hour, " +
+            "8:00 AM–7:00 PM in your timezone" +
+            (auto.lastRun
+              ? " · last run " + new Date(auto.lastRun * 1000).toLocaleString()
+              : ""),
+          onClick: toggleAutosync,
+        }, "⏰ Hourly sync " + (auto.enabled ? "on" : "off")),
       notice ? h("span", { style: { color: MUTED, fontSize: 12.5 } }, notice) : null);
   }
 
@@ -596,8 +743,9 @@
       props.meetings.filter(function (m) {
         return matchesSearch(m) && matchesType(m);
       }).forEach(function (m) {
-        ((m.analysis && m.analysis[key]) || []).forEach(function (text) {
-          out.push({ text: text, meeting: m.title,
+        ((m.analysis && m.analysis[key]) || []).forEach(function (item) {
+          out.push({ text: itemText(item), quote: itemQuote(item),
+                     meetingId: m.id, meeting: m.title,
                      heldAt: m.heldAt || m.createdAt });
         });
       });
@@ -669,7 +817,18 @@
                 "Nothing captured in this category yet.")
             : h("ul", { className: "dk-list" + (filter === "risks" ? " dk-risks" : "") },
                 items.map(function (it, i) {
-                  return h("li", { key: i },
+                  var onEv = props.onEvidence ? function () {
+                    props.onEvidence({ meetingId: it.meetingId,
+                      meetingTitle: it.meeting,
+                      quotes: it.quote ? [it.quote] : [],
+                      label: label + ": " + it.text });
+                  } : null;
+                  return h("li", {
+                      key: i,
+                      className: onEv ? "dk-ev-item" : null,
+                      title: onEv ? "Show the supporting transcript excerpt" : null,
+                      onClick: onEv,
+                    },
                     it.text,
                     h("span", { className: "dk-attrib" },
                       " — " + it.meeting +
@@ -707,9 +866,19 @@
                         ? h("span", { className: "dk-chip dk-chip-type" },
                             m.analysis.meetingType)
                         : null,
-                      h("span", { className: "dk-chip dk-chip-fill",
+                      h("span", { className: "dk-chip dk-chip-fill dk-ev-item",
                           title: "Client sentiment " +
-                            sentimentPct(m.analysis.sentimentScore) + "%",
+                            sentimentPct(m.analysis.sentimentScore) +
+                            "% — click for the transcript evidence",
+                          onClick: function (e) {
+                            e.stopPropagation();
+                            if (props.onEvidence) props.onEvidence({
+                              meetingId: m.id, meetingTitle: m.title,
+                              quotes: (m.analysis.sentimentQuotes) || [],
+                              label: "Sentiment evidence — " +
+                                (m.analysis.sentimentLabel || "") + " · " +
+                                sentimentPct(m.analysis.sentimentScore) + "%" });
+                          },
                           style: {
                             background: scaleColor(sentimentPct(m.analysis.sentimentScore) / 100),
                             borderColor: scaleColor(sentimentPct(m.analysis.sentimentScore) / 100) } },
@@ -731,7 +900,10 @@
                   (m.provider === "import" ? "imported" : m.provider) +
                   (m.heldAt ? " · " + fmtWhen(m.heldAt) : "") +
                   (m.durationMin ? " · " + Math.round(m.durationMin) + "m" : ""))),
-              isOpen && m.analysis ? h(AnalysisView, { analysis: m.analysis }) : null,
+              isOpen && m.analysis
+                ? h(AnalysisView, { analysis: m.analysis, meetingId: m.id,
+                    meetingTitle: m.title, onEvidence: props.onEvidence })
+                : null,
               isOpen && !m.analysis
                 ? h("div", { style: { color: MUTED, fontSize: 13, marginTop: 6 } },
                     "Not analyzed yet — hit ✨ Analyze.")
@@ -827,6 +999,8 @@
     }
     var importSt = useState(false);
     var showImport = importSt[0], setShowImport = importSt[1];
+    var evSt = useState(null);        // {meetingId, meetingTitle, quotes, label}
+    var evidence = evSt[0], setEvidence = evSt[1];
 
     var refresh = useCallback(function () {
       return api("/state")
@@ -834,6 +1008,17 @@
         .catch(function (e) { setErr(String((e && e.message) || e)); });
     }, []);
     useEffect(function () { refresh(); }, [refresh]);
+    // keep the hourly auto-sync window (8:00-19:00) on the viewer's clock —
+    // registers the cron job on first visit, re-aims it after DST shifts
+    useEffect(function () {
+      postJSON("/autosync", { tzOffsetMinutes: new Date().getTimezoneOffset() })
+        .then(function (r) {
+          setSt(function (prev) {
+            return prev ? Object.assign({}, prev, { autosync: r.autosync }) : prev;
+          });
+        })
+        .catch(function () {});
+    }, []);
     var batchRunning = !!(st && st.batch && st.batch.running);
     useEffect(function () {
       if (!batchRunning) return undefined;
@@ -864,20 +1049,25 @@
             })),
         err ? h("div", { className: "dk-err" }, err) : null,
         tab === "dashboard"
-          ? h(DashboardTab, { dashboard: st.dashboard })
+          ? h(DashboardTab, { dashboard: st.dashboard, onEvidence: setEvidence })
           : h(React.Fragment, null,
               h(ConnectBar, { providers: st.providers, onState: setSt,
                               onImport: function () { setShowImport(true); } }),
               h(SyncBar, { providers: st.providers, meetings: st.meetings,
-                           batch: st.batch, onState: setSt,
+                           batch: st.batch, autosync: st.autosync, onState: setSt,
                            onImport: function () { setShowImport(true); } }),
               h(MeetingsTab, { meetings: st.meetings, providers: st.providers,
                                batch: st.batch,
                                onState: setSt,
+                               onEvidence: setEvidence,
                                onImport: function () { setShowImport(true); } })),
         showImport
           ? h(ImportModal, { onState: setSt,
                              onClose: function () { setShowImport(false); } })
+          : null,
+        evidence
+          ? h(EvidenceModal, { ev: evidence,
+                               onClose: function () { setEvidence(null); } })
           : null));
   }
 

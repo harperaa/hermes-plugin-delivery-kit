@@ -24,25 +24,63 @@ _SCHEMA = {
                         "description": "client | sales | internal | other — client = delivery/service meeting with a paying client; sales = prospect; internal = own team/peers/mentors; other = anything else"},
         "overview": {"type": "string",
                      "description": "2-3 sentence meeting overview"},
-        "insights": {"type": "array", "items": {"type": "string"},
-                     "description": "3-8 concrete insights from the meeting"},
+        "insights": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "quote": {"type": "string",
+                          "description": "short VERBATIM supporting excerpt copied exactly from the transcript"}},
+            "required": ["text", "quote"]},
+                     "description": "3-8 concrete insights, each with its verbatim supporting quote"},
         "sentimentScore": {"type": "number",
                            "description": "Client sentiment -1.0 (hostile) to 1.0 (delighted)"},
         "sentimentLabel": {"type": "string",
                            "description": "one word: negative | mixed | neutral | positive"},
+        "sentimentQuotes": {"type": "array", "items": {"type": "string"},
+                            "description": "1-3 VERBATIM transcript excerpts that best evidence the sentiment score"},
         "satisfactionScore": {"type": "number",
                               "description": "Client satisfaction 0-10 as evidenced in THIS meeting. Use -1 when meetingType is internal/other (no client to satisfy)."},
         "satisfactionRationale": {"type": "string",
                                   "description": "One sentence citing the evidence for the score"},
-        "lessons": {"type": "array", "items": {"type": "string"},
+        "lessons": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "quote": {"type": "string",
+                          "description": "short VERBATIM supporting excerpt copied exactly from the transcript"}},
+            "required": ["text", "quote"]},
                     "description": "Lessons learned for delivering better (0-5)"},
-        "actionItems": {"type": "array", "items": {"type": "string"},
+        "actionItems": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "quote": {"type": "string",
+                          "description": "short VERBATIM supporting excerpt copied exactly from the transcript"}},
+            "required": ["text", "quote"]},
                         "description": "Open action items with owners when stated"},
-        "risks": {"type": "array", "items": {"type": "string"},
+        "risks": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "quote": {"type": "string",
+                          "description": "short VERBATIM supporting excerpt copied exactly from the transcript"}},
+            "required": ["text", "quote"]},
                   "description": "Churn/scope/relationship risks heard (0-3)"},
-        "strengths": {"type": "array", "items": {"type": "string"},
+        "strengths": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "quote": {"type": "string",
+                          "description": "short VERBATIM supporting excerpt copied exactly from the transcript"}},
+            "required": ["text", "quote"]},
                       "description": "What went well in the delivery — things the client praised or that clearly landed (0-5)"},
-        "weaknesses": {"type": "array", "items": {"type": "string"},
+        "weaknesses": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "quote": {"type": "string",
+                          "description": "short VERBATIM supporting excerpt copied exactly from the transcript"}},
+            "required": ["text", "quote"]},
                        "description": "What fell short — friction, complaints, or delivery gaps heard in the meeting (0-5)"},
     },
     "required": ["meetingType", "overview", "insights", "sentimentScore",
@@ -59,6 +97,12 @@ FIRST classify meetingType:
 - other: anything else
 
 - overview (2-3 sentences)
+- EVIDENCE RULE: every list item (insights, lessons, actionItems, risks,
+  strengths, weaknesses) is an object {text, quote} where quote is a SHORT
+  VERBATIM excerpt copied character-for-character from the transcript (the
+  line(s) that best support the item). Never paraphrase inside quote.
+  Also provide sentimentQuotes: 1-3 verbatim excerpts evidencing the
+  sentiment score.
 - insights: concrete, decision-useful takeaways (3-8)
 - sentimentScore/-Label: the counterpart's sentiment (the client's when
   present; the room's overall for internal). Read the OVERALL DEMEANOR,
@@ -133,11 +177,21 @@ def analyze_meeting(meeting_id: int, feedback: str = "") -> dict:
                 parsed = None
     if not isinstance(parsed, dict):
         raise RuntimeError("analyst returned no usable response — try again")
-    parsed.setdefault("lessons", [])
-    parsed.setdefault("actionItems", [])
-    parsed.setdefault("risks", [])
-    parsed.setdefault("strengths", [])
-    parsed.setdefault("weaknesses", [])
+    def _norm_items(v):
+        out = []
+        for it in (v or []):
+            if isinstance(it, dict):
+                out.append({"text": str(it.get("text") or "").strip(),
+                            "quote": str(it.get("quote") or "").strip()})
+            elif str(it).strip():
+                out.append({"text": str(it).strip(), "quote": ""})
+        return [x for x in out if x["text"]]
+    for key in ("insights", "lessons", "actionItems", "risks",
+                "strengths", "weaknesses"):
+        parsed[key] = _norm_items(parsed.get(key))
+    parsed.setdefault("sentimentQuotes", [])
+    parsed["sentimentQuotes"] = [str(q).strip() for q in
+                                 (parsed.get("sentimentQuotes") or []) if str(q).strip()][:3]
     mt = str(parsed.get("meetingType") or "other").lower()
     parsed["meetingType"] = mt if mt in ("client", "sales", "internal", "other") else "other"
     if parsed["meetingType"] in ("internal", "other"):
@@ -173,7 +227,12 @@ def dashboard_rollup(meetings: Optional[list[dict]] = None) -> dict:
                             ("risks", risks), ("strengths", strengths),
                             ("weaknesses", weaknesses)):
             for item in m["analysis"].get(key) or []:
-                bucket.append({"text": item, "meeting": m["title"],
+                if isinstance(item, dict):
+                    text, quote = item.get("text") or "", item.get("quote") or ""
+                else:
+                    text, quote = str(item), ""
+                bucket.append({"text": text, "quote": quote,
+                               "meetingId": m["id"], "meeting": m["title"],
                                "heldAt": m.get("heldAt") or m.get("createdAt")})
     return {
         "analyzed": n,

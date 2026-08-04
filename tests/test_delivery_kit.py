@@ -23,6 +23,7 @@ if PKG not in sys.modules:
 store = importlib.import_module(f"{PKG}.store")
 providers = importlib.import_module(f"{PKG}.providers")
 analysis = importlib.import_module(f"{PKG}.analysis")
+schedule = importlib.import_module(f"{PKG}.schedule")
 
 
 @pytest.fixture()
@@ -386,3 +387,106 @@ def test_analyze_requires_transcript(home):
     mid, _ = store.upsert_meeting("import", None, "Empty", None, None, "")
     with pytest.raises(RuntimeError):
         analysis.analyze_meeting(mid)
+
+
+def test_evidence_normalization_and_rollup_quotes(home, monkeypatch):
+    mid, _ = store.upsert_meeting("import", None, "Evidence call", 100.0, None,
+                                  "Client: honestly this has been fantastic")
+    parsed = {"meetingType": "client", "overview": "x",
+              "insights": [{"text": "wants phase 2", "quote": "plan phase 2 now"},
+                           "legacy string insight"],
+              "sentimentScore": 0.7, "sentimentLabel": "positive",
+              "sentimentQuotes": ["  honestly this has been fantastic  ", "",
+                                  "q2", "q3", "q4"],
+              "satisfactionScore": 9, "satisfactionRationale": "r",
+              "lessons": [], "actionItems": [], "risks": [],
+              "strengths": [{"text": "", "quote": "dropped with empty text"}],
+              "weaknesses": []}
+
+    class FakeRes:
+        def __init__(self, p):
+            self.parsed = p
+
+    class FakeLlm:
+        def complete_structured(self, **kw):
+            return FakeRes(parsed)
+
+    monkeypatch.setattr(analysis, "_llm", lambda: FakeLlm())
+    out = analysis.analyze_meeting(mid)
+
+    # object items pass through; legacy strings coerce; empty text drops
+    assert out["insights"][0] == {"text": "wants phase 2", "quote": "plan phase 2 now"}
+    assert out["insights"][1] == {"text": "legacy string insight", "quote": ""}
+    assert out["strengths"] == []
+    # sentiment quotes: stripped, empties dropped, capped at 3
+    assert out["sentimentQuotes"] == ["honestly this has been fantastic", "q2", "q3"]
+
+    roll = analysis.dashboard_rollup()
+    ins = roll["insights"][0]
+    assert ins["quote"] == "plan phase 2 now"
+    assert ins["meetingId"] == mid
+    assert ins["meeting"] == "Evidence call"
+
+
+def test_autosync_cron_expr_maps_local_window_to_utc():
+    # EDT: getTimezoneOffset() = 240 -> 8:00-19:00 local = 12:00-23:00 UTC
+    assert schedule._cron_expr(240) == \
+        "0 " + ",".join(str(h) for h in range(12, 24)) + " * * *"
+    # UTC user: window unchanged
+    assert schedule._cron_expr(0) == \
+        "0 " + ",".join(str(h) for h in range(8, 20)) + " * * *"
+    # IST (+05:30): offset -330 -> minute 30, hours 2..13 UTC
+    assert schedule._cron_expr(-330) == \
+        "30 " + ",".join(str(h) for h in range(2, 14)) + " * * *"
+
+
+def test_autosync_ensure_creates_and_updates_job(home, monkeypatch):
+    import types
+    created, updated = [], []
+    jobs_by_ref = {}
+
+    fake_jobs = types.ModuleType("cron.jobs")
+
+    def resolve_job_ref(ref):
+        return jobs_by_ref.get(ref)
+
+    def create_job(prompt, schedule, name=None, deliver=None,
+                   script=None, no_agent=False, **kw):
+        job = {"id": "job-1", "name": name, "schedule": schedule,
+               "script": script, "no_agent": no_agent, "enabled": True}
+        jobs_by_ref[job["id"]] = job
+        jobs_by_ref[name] = job
+        created.append(job)
+        return job
+
+    def update_job(job_id, updates):
+        jobs_by_ref[job_id].update(updates)
+        updated.append(updates)
+        return jobs_by_ref[job_id]
+
+    fake_jobs.resolve_job_ref = resolve_job_ref
+    fake_jobs.create_job = create_job
+    fake_jobs.update_job = update_job
+    fake_cron = types.ModuleType("cron")
+    fake_cron.jobs = fake_jobs
+    monkeypatch.setitem(sys.modules, "cron", fake_cron)
+    monkeypatch.setitem(sys.modules, "cron.jobs", fake_jobs)
+
+    info = schedule.ensure_sync_job(tz_offset_minutes=240)
+    assert len(created) == 1
+    assert created[0]["no_agent"] is True
+    assert created[0]["schedule"].startswith("0 12,")
+    assert info["enabled"] is True and info["configured"] is True
+
+    # generated script exists under ~/.hermes/scripts and compiles
+    script = home / "scripts" / schedule.SCRIPT_NAME
+    assert script.exists()
+    compile(script.read_text(), str(script), "exec")
+
+    # toggle off updates the existing job instead of creating another
+    info2 = schedule.ensure_sync_job(enabled=False)
+    assert len(created) == 1
+    assert updated and updated[-1]["enabled"] is False
+    assert info2["enabled"] is False
+    # tz offset survives the toggle
+    assert schedule.load_settings()["tzOffsetMinutes"] == 240
