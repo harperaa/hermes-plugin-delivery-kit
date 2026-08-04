@@ -188,11 +188,22 @@
     return "#ef4444";
   }
 
-  // Continuous scale: t in [0,1] -> red (0) through amber to green (1),
-  // with every shade between.
+  // Piecewise scale (Allen-tuned for contrast):
+  //   0-60   reds -> orange
+  //   60-80  orange -> yellow
+  //   80-100 greens, light -> dark
   function scaleColor(t) {
     t = Math.max(0, Math.min(1, t));
-    return "hsl(" + Math.round(t * 120) + ", 72%, 46%)";
+    if (t < 0.6) {
+      var h0 = (t / 0.6) * 30;                    // 0 red -> 30 orange
+      return "hsl(" + Math.round(h0) + ", 78%, 46%)";
+    }
+    if (t < 0.8) {
+      var h1 = 30 + ((t - 0.6) / 0.2) * 25;       // orange -> 55 yellow
+      return "hsl(" + Math.round(h1) + ", 82%, 44%)";
+    }
+    var l = 45 - ((t - 0.8) / 0.2) * 19;          // light green -> dark green
+    return "hsl(125, 62%, " + Math.round(l) + "%)";
   }
   function sentimentPct(score) {          // -1..1 -> 0..100
     return Math.round(((Number(score) + 1) / 2) * 100);
