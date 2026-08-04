@@ -375,6 +375,8 @@
       h("p", { style: { margin: "6px 0", fontSize: 13.5 } }, a.overview),
       h("p", { style: { margin: "6px 0", fontSize: 12.5, color: MUTED } },
         a.satisfactionRationale),
+      list("Strengths", a.strengths),
+      list("Weaknesses", a.weaknesses),
       list("Insights", a.insights),
       list("Lessons learned", a.lessons),
       list("Action items", a.actionItems),
@@ -422,6 +424,24 @@
         .finally(function () { setBusy(null); });
     }
 
+    var filterSt = useState(null);        // "strengths" | "weaknesses" | "risks"
+    var filter = filterSt[0], setFilter = filterSt[1];
+    var CATS = [
+      ["strengths", "💪 Strengths"],
+      ["weaknesses", "📉 Weaknesses"],
+      ["risks", "🚨 Risks"],
+    ];
+    function catItems(key) {
+      var out = [];
+      props.meetings.forEach(function (m) {
+        ((m.analysis && m.analysis[key]) || []).forEach(function (text) {
+          out.push({ text: text, meeting: m.title,
+                     heldAt: m.heldAt || m.createdAt });
+        });
+      });
+      return out;
+    }
+
     var redoSt = useState(null);          // meeting being redone
     var redoFor = redoSt[0], setRedoFor = redoSt[1];
     var fbSt = useState("");
@@ -440,7 +460,53 @@
     var batch = props.batch || {};
     var batchRunning = !!batch.running;
 
+    var filterBar = h("div", { className: "dk-filterbar" },
+      CATS.map(function (c) {
+        var n = catItems(c[0]).length;
+        return h("button", {
+          key: c[0],
+          className: "dk-tab" + (filter === c[0] ? " dk-tab-on" : ""),
+          title: filter === c[0] ? "Back to the meeting list"
+            : "One view of every " + c[0].replace(/s$/, "") + " across all meetings",
+          onClick: function () { setFilter(filter === c[0] ? null : c[0]); },
+        }, c[1] + (n ? " (" + n + ")" : ""));
+      }),
+      filter
+        ? h("button", { className: "dk-btn", style: { fontSize: 12 },
+                        onClick: function () { setFilter(null); } }, "✕ clear")
+        : null);
+
+    if (filter) {
+      var items = catItems(filter);
+      var preCat = props.meetings.filter(function (m) {
+        return m.analysis && m.analysis[filter] === undefined;
+      }).length;
+      var label = CATS.filter(function (c) { return c[0] === filter; })[0][1];
+      return h("div", null,
+        filterBar,
+        h("div", { className: "dk-card" },
+          h("div", { style: { fontWeight: 800, marginBottom: 8 } },
+            label + " — across every analyzed meeting"),
+          items.length === 0
+            ? h("div", { style: { color: MUTED, fontSize: 13.5 } },
+                "Nothing captured in this category yet.")
+            : h("ul", { className: "dk-list" + (filter === "risks" ? " dk-risks" : "") },
+                items.map(function (it, i) {
+                  return h("li", { key: i },
+                    it.text,
+                    h("span", { className: "dk-attrib" },
+                      " — " + it.meeting +
+                      (it.heldAt ? " · " + fmtWhen(it.heldAt) : "")));
+                })),
+          preCat > 0
+            ? h("div", { style: { color: MUTED, fontSize: 12.5, marginTop: 10 } },
+                preCat + " meeting(s) were analyzed before " + filter +
+                " tracking existed — hit ↻ Redo on them to extract.")
+            : null));
+    }
+
     return h("div", null,
+      filterBar,
       h("div", { className: "dk-card", style: { display: "flex", gap: 10,
                  alignItems: "center", flexWrap: "wrap" } },
         syncable.length

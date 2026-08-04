@@ -38,6 +38,10 @@ _SCHEMA = {
                         "description": "Open action items with owners when stated"},
         "risks": {"type": "array", "items": {"type": "string"},
                   "description": "Churn/scope/relationship risks heard (0-3)"},
+        "strengths": {"type": "array", "items": {"type": "string"},
+                      "description": "What went well in the delivery — things the client praised or that clearly landed (0-5)"},
+        "weaknesses": {"type": "array", "items": {"type": "string"},
+                       "description": "What fell short — friction, complaints, or delivery gaps heard in the meeting (0-5)"},
     },
     "required": ["overview", "insights", "sentimentScore", "sentimentLabel",
                  "satisfactionScore", "satisfactionRationale"],
@@ -53,6 +57,8 @@ vibes:
 - lessons: what to do differently next delivery (skip if none earned)
 - actionItems: open commitments, with owner names when stated
 - risks: churn, scope, or relationship risks actually heard
+- strengths: what went well — client praise, wins, things that landed
+- weaknesses: what fell short — friction, complaints, delivery gaps
 
 Be honest — a tense meeting scores low. Never invent content that is not in
 the transcript."""
@@ -106,6 +112,8 @@ def analyze_meeting(meeting_id: int, feedback: str = "") -> dict:
     parsed.setdefault("lessons", [])
     parsed.setdefault("actionItems", [])
     parsed.setdefault("risks", [])
+    parsed.setdefault("strengths", [])
+    parsed.setdefault("weaknesses", [])
     store.save_analysis(meeting_id, parsed)
     return parsed
 
@@ -126,9 +134,11 @@ def dashboard_rollup(meetings: Optional[list[dict]] = None) -> dict:
               "satisfaction": float(m["analysis"].get("satisfactionScore", 0))}
              for m in reversed(analyzed)]
     lessons, insights, risks = [], [], []
+    strengths, weaknesses = [], []
     for m in analyzed:
         for key, bucket in (("lessons", lessons), ("insights", insights),
-                            ("risks", risks)):
+                            ("risks", risks), ("strengths", strengths),
+                            ("weaknesses", weaknesses)):
             for item in m["analysis"].get(key) or []:
                 bucket.append({"text": item, "meeting": m["title"],
                                "heldAt": m.get("heldAt") or m.get("createdAt")})
@@ -143,6 +153,8 @@ def dashboard_rollup(meetings: Optional[list[dict]] = None) -> dict:
         "lessons": lessons[:40],
         "insights": insights[:60],
         "risks": risks[:20],
+        "strengths": strengths[:40],
+        "weaknesses": weaknesses[:40],
     }
 
 

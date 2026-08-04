@@ -199,7 +199,9 @@ def test_analysis_and_rollup(home, monkeypatch):
              "sentimentScore": -0.5, "sentimentLabel": "negative",
              "satisfactionScore": 3, "satisfactionRationale": "said 'frustrated'",
              "lessons": ["Communicate slips early"], "actionItems": [],
-             "risks": ["churn risk if next sprint slips"]},
+             "risks": ["churn risk if next sprint slips"],
+             "strengths": ["report quality praised"],
+             "weaknesses": ["two deadline slips in a row"]},
     }
 
     class FakeRes:
@@ -229,6 +231,8 @@ def test_analysis_and_rollup(home, monkeypatch):
     assert roll["trend"][0]["title"] == "Good call"
     assert roll["risks"][0]["meeting"] == "Rough call"
     assert roll["lessons"][0]["text"] == "Communicate slips early"
+    assert roll["strengths"][0]["text"] == "report quality praised"
+    assert roll["weaknesses"][0]["meeting"] == "Rough call"
 
     # chat tool surfaces analyzed meetings
     found = json.loads(analysis.tool_meeting_search({"query": "frustrated"}))

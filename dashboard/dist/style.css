@@ -157,3 +157,7 @@
 }
 .dk-spin { display: inline-block; animation: dk-spin 1.1s linear infinite; }
 @keyframes dk-spin { to { transform: rotate(360deg); } }
+
+/* ---- category filter bar ---- */
+.dk-filterbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+                margin-bottom: 12px; }
