@@ -128,6 +128,13 @@ def sync(body: SyncBody):
             provider_id, t["externalId"], t["title"], t["heldAt"],
             t["durationMin"], t["transcript"], t["providerSummary"])
         created += 1 if was_new else 0
+    if created:
+        # new transcripts auto-analyze via the existing batch machinery
+        # (skips already-analyzed; page shows the running chip)
+        try:
+            analysis.start_batch(force=False)
+        except Exception:  # noqa: BLE001 — analysis must never break sync
+            pass
     return {"ok": True, "provider": provider_id, "fetched": len(fetched),
             "new": created, "state": _public_state()}
 
@@ -157,6 +164,10 @@ def manual_import(body: ImportBody):
     mid, _ = store.upsert_meeting(
         "import", None, body.title, body.heldAt or None, None,
         body.transcript, "")
+    try:
+        analysis.start_batch(force=False)
+    except Exception:  # noqa: BLE001
+        pass
     return {"ok": True, "meetingId": mid, "state": _public_state()}
 
 
