@@ -478,9 +478,19 @@ def test_autosync_ensure_creates_and_updates_job(home, monkeypatch):
         updated.append(updates)
         return jobs_by_ref[job_id]
 
+    removed = []
+
+    def remove_job(job_id):
+        job = jobs_by_ref.pop(job_id, None)
+        if job:
+            jobs_by_ref.pop(job.get("name"), None)
+            removed.append(job_id)
+        return True
+
     fake_jobs.resolve_job_ref = resolve_job_ref
     fake_jobs.create_job = create_job
     fake_jobs.update_job = update_job
+    fake_jobs.remove_job = remove_job
     fake_cron = types.ModuleType("cron")
     fake_cron.jobs = fake_jobs
     monkeypatch.setitem(sys.modules, "cron", fake_cron)
@@ -497,13 +507,15 @@ def test_autosync_ensure_creates_and_updates_job(home, monkeypatch):
     assert script.exists()
     compile(script.read_text(), str(script), "exec")
 
-    # toggle off updates the existing job instead of creating another
+    # toggle off DELETES the job — no zombie disabled entries
     info2 = schedule.ensure_sync_job(enabled=False)
     assert len(created) == 1
-    assert updated and updated[-1]["enabled"] is False
-    assert info2["enabled"] is False
-    # tz offset survives the toggle
+    assert removed == ["job-1"]
+    assert info2["enabled"] is False and info2["configured"] is False
+    # tz offset survives the toggle; re-enabling recreates
     assert schedule.load_settings()["tzOffsetMinutes"] == 240
+    schedule.ensure_sync_job(enabled=True)
+    assert len(created) == 2
 
     # range + frequency flow through to the schedule and persist
     info3 = schedule.ensure_sync_job(enabled=True, start_hour=9,

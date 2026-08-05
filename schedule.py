@@ -208,14 +208,19 @@ def ensure_sync_job(tz_offset_minutes: Optional[int] = None,
             s["cronJobId"] = job["id"]
             logger.info("delivery-kit: created auto-sync job %s (%s)",
                         job["id"], expr)
-    else:
+    elif s["enabled"]:
         cron_jobs.update_job(job["id"], {
             "schedule": expr,
             "script": SCRIPT_NAME,
             "no_agent": True,
-            "enabled": s["enabled"],
+            "enabled": True,
         })
         s["cronJobId"] = job["id"]
+    else:
+        # OFF means gone — no zombie disabled jobs on the Cron tab;
+        # re-enabling recreates the job from scratch
+        cron_jobs.remove_job(job["id"])
+        s.pop("cronJobId", None)
 
     save_settings(s)
     st = autosync_status()
