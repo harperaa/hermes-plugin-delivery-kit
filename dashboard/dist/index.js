@@ -1168,7 +1168,7 @@
       h("div", { className: "dk-inner" },
         h("div", { style: { marginBottom: 14 } },
           h("div", { style: { fontSize: 13, letterSpacing: 1.5, color: MUTED,
-                              textTransform: "uppercase" } }, "AI Cyber Value Creator"),
+                              textTransform: "uppercase" } }, "AI Cyber Value Creator™"),
           h("h1", { style: { fontSize: 30, margin: "4px 0 6px", fontWeight: 800 } },
             "📦 Delivery Kit")),
         h("div", { className: "dk-tabs" },
