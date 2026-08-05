@@ -244,8 +244,8 @@ def _stamp_lines(rows: list, duration_min: Optional[float] = None) -> str:
 # ---------------------------------------------------------------------------
 
 _FF_QUERY = """
-query Transcripts($limit: Int) {
-  transcripts(limit: $limit) {
+query Transcripts($limit: Int, $skip: Int, $fromDate: DateTime, $toDate: DateTime) {
+  transcripts(limit: $limit, skip: $skip, fromDate: $fromDate, toDate: $toDate) {
     id
     title
     date
@@ -257,12 +257,26 @@ query Transcripts($limit: Int) {
 """
 
 
-def fireflies_fetch(limit: int = 25) -> list[dict]:
+def _epoch_to_iso(epoch) -> Optional[str]:
+    if not epoch:
+        return None
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(float(epoch), tz=timezone.utc) \
+        .strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def fireflies_fetch(limit: int = 25, skip: int = 0,
+                    from_epoch=None, to_epoch=None) -> list[dict]:
     key = get_key("FIREFLIES_API_KEY")
     if not key:
         raise RuntimeError("Fireflies is not connected — add your API key first")
+    variables = {"limit": max(1, min(limit, 50)), "skip": max(0, int(skip))}
+    if from_epoch:
+        variables["fromDate"] = _epoch_to_iso(from_epoch)
+    if to_epoch:
+        variables["toDate"] = _epoch_to_iso(to_epoch)
     body = json.dumps({"query": _FF_QUERY,
-                       "variables": {"limit": max(1, min(limit, 50))}}).encode()
+                       "variables": variables}).encode()
     req = urllib.request.Request(
         FIREFLIES_URL, data=body,
         headers={"Content-Type": "application/json",
@@ -463,3 +477,20 @@ def sync_provider(provider_id: str, limit: int = 25) -> list[dict]:
     if fn is None:
         raise RuntimeError(f"{provider_id} has no direct sync yet — use Import")
     return fn(limit)
+
+
+def fireflies_fetch_window(from_epoch=None, to_epoch=None,
+                           max_pages: int = 20) -> list[dict]:
+    """Page through a date window (skip-based, 50/page)."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    for page in range(max_pages):
+        batch = fireflies_fetch(limit=50, skip=page * 50,
+                                from_epoch=from_epoch, to_epoch=to_epoch)
+        fresh = [t for t in batch if t["externalId"] not in seen]
+        for t in fresh:
+            seen.add(t["externalId"])
+        out.extend(fresh)
+        if len(batch) < 50:
+            break
+    return out

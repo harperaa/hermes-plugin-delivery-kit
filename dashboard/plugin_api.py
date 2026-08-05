@@ -139,6 +139,50 @@ def sync(body: SyncBody):
             "new": created, "state": _public_state()}
 
 
+class SyncExtendedBody(BaseModel):
+    mode: str = "more30"      # more30 | all
+
+
+@router.post("/sync-extended")
+def sync_extended(body: SyncExtendedBody):
+    """Pull older Fireflies history: 30 days before the oldest stored
+    meeting, or everything. New arrivals auto-analyze via the batch."""
+    mode = (body.mode or "more30").strip()
+    if mode not in ("more30", "all"):
+        raise HTTPException(status_code=400, detail="mode: more30 or all")
+    meetings = store.list_meetings()
+    oldest = min((m.get("heldAt") for m in meetings
+                  if m.get("provider") == "fireflies" and m.get("heldAt")),
+                 default=None)
+    try:
+        if mode == "more30":
+            if not oldest:
+                raise RuntimeError("no synced meetings yet — run Sync first")
+            fetched = providers.fireflies_fetch_window(
+                from_epoch=oldest - 30 * 86400, to_epoch=oldest)
+        else:
+            fetched = providers.fireflies_fetch_window(
+                from_epoch=None, to_epoch=oldest, max_pages=40)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502,
+                            detail=f"extended pull failed: {exc}")
+    created = 0
+    for t in fetched:
+        _, was_new = store.upsert_meeting(
+            "fireflies", t["externalId"], t["title"], t["heldAt"],
+            t["durationMin"], t["transcript"], t["providerSummary"])
+        created += 1 if was_new else 0
+    if created:
+        try:
+            analysis.start_batch(force=False)
+        except Exception:  # noqa: BLE001
+            pass
+    return {"ok": True, "fetched": len(fetched), "new": created,
+            "state": _public_state()}
+
+
 @router.post("/autosync")
 def autosync(body: AutosyncBody):
     """Create/update the hourly auto-sync cron job (08:00-19:00 user-local).

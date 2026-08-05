@@ -849,6 +849,7 @@
 
     function runSearch(text) {
       setQ(text);
+      setPage(0);
       if (qTimer.current) window.clearTimeout(qTimer.current);
       if (!text.trim()) { setMatchIds(null); return; }
       qTimer.current = window.setTimeout(function () {
@@ -885,6 +886,27 @@
       return out;
     }
 
+    var pageSt = useState(0);
+    var page = pageSt[0], setPage = pageSt[1];
+    var sizeSt = useState(25);
+    var pageSize = sizeSt[0], setPageSize = sizeSt[1];
+    var pullSt = useState(null);          // "more30" | "all" confirm modal
+    var pullConfirm = pullSt[0], setPullConfirm = pullSt[1];
+    var pullingSt = useState(false);
+    var pulling = pullingSt[0], setPulling = pullingSt[1];
+
+    function runPull(mode) {
+      setPullConfirm(null); setPulling(true); setNotice(null);
+      postJSON("/sync-extended", { mode: mode })
+        .then(function (r) {
+          props.onState(r.state);
+          setNotice("Pulled " + r.fetched + " meeting(s), " + r.new +
+            " new — auto-analysis " + (r.new ? "started." : "not needed."));
+        })
+        .catch(function (e) { setNotice(String((e && e.message) || e)); })
+        .finally(function () { setPulling(false); });
+    }
+
     var redoSt = useState(null);          // meeting being redone
     var redoFor = redoSt[0], setRedoFor = redoSt[1];
     var fbSt = useState("");
@@ -915,7 +937,10 @@
           key: "t" + t[0],
           className: "dk-tab" + (typeFilter === t[0] ? " dk-tab-on" : ""),
           title: "Show only " + t[0] + " meetings",
-          onClick: function () { setTypeFilter(typeFilter === t[0] ? null : t[0]); },
+          onClick: function () {
+            setTypeFilter(typeFilter === t[0] ? null : t[0]);
+            setPage(0);
+          },
         }, t[1] + " (" + n + ")");
       }),
       h("span", { className: "dk-fdiv" }),
@@ -984,9 +1009,15 @@
           }).length === 0
         ? h("div", { className: "dk-card", style: { color: MUTED, fontSize: 13.5 } },
             "No meetings match the current filters.")
-        : props.meetings.filter(function (m) {
-            return matchesSearch(m) && matchesType(m);
-          }).map(function (m) {
+        : (function () {
+            var filtered = props.meetings.filter(function (m) {
+              return matchesSearch(m) && matchesType(m);
+            });
+            var curPage = Math.min(page,
+              Math.max(0, Math.ceil(filtered.length / pageSize) - 1));
+            return filtered.slice(curPage * pageSize,
+                                  (curPage + 1) * pageSize);
+          })().map(function (m) {
             var isOpen = expanded === m.id;
             return h("div", { key: m.id, className: "dk-card dk-meeting" },
               h("div", { className: "dk-meeting-head",
@@ -1042,6 +1073,83 @@
                     "Not analyzed yet — hit ✨ Analyze.")
                 : null);
           }),
+      (function () {
+        var filtered = props.meetings.filter(function (m) {
+          return matchesSearch(m) && matchesType(m);
+        });
+        var total = filtered.length;
+        var curPage = Math.min(page,
+          Math.max(0, Math.ceil(total / pageSize) - 1));
+        return h("div", { className: "dk-pagination" },
+          total > pageSize
+            ? h(React.Fragment, null,
+                h("button", { className: "dk-btn",
+                    disabled: curPage === 0,
+                    onClick: function () { setPage(curPage - 1); } },
+                  "Previous"),
+                h("span", { style: { color: MUTED, fontSize: 12.5 } },
+                  (total ? curPage * pageSize + 1 : 0) + "–" +
+                  Math.min((curPage + 1) * pageSize, total) +
+                  " of " + total),
+                h("button", { className: "dk-btn",
+                    disabled: (curPage + 1) * pageSize >= total,
+                    onClick: function () { setPage(curPage + 1); } },
+                  "Next"),
+                h("select", { className: "dk-input",
+                    style: { width: "auto" },
+                    value: String(pageSize),
+                    onChange: function (e) {
+                      setPageSize(Number(e.target.value)); setPage(0);
+                    } },
+                  [10, 25, 50].map(function (n) {
+                    return h("option", { key: n, value: String(n) },
+                      n + " / page");
+                  })))
+            : null,
+          h("span", { style: { flex: 1 } }),
+          h("button", { className: "dk-btn", disabled: pulling,
+              title: "Fetch the 30 days before your oldest synced meeting",
+              onClick: function () { setPullConfirm("more30"); } },
+            pulling ? "Pulling…" : "⟲ Pull 30 more days"),
+          h("button", { className: "dk-btn", disabled: pulling,
+              title: "Fetch your entire Fireflies history",
+              onClick: function () { setPullConfirm("all"); } },
+            "Pull ALL transcripts"));
+      })(),
+      pullConfirm
+        ? h("div", { className: "dk-modal", onClick: function (e) {
+              if (e.target === e.currentTarget) setPullConfirm(null);
+            } },
+            h("div", { className: "dk-modal-box" },
+              h("div", { style: { fontWeight: 800, fontSize: 15,
+                  marginBottom: 8 } },
+                pullConfirm === "all"
+                  ? "Pull your ENTIRE transcript history?"
+                  : "Pull 30 more days of transcripts?"),
+              h("div", { style: { fontSize: 13, lineHeight: 1.6,
+                  marginBottom: 6 } },
+                pullConfirm === "all"
+                  ? "This fetches every Fireflies meeting older than your " +
+                    "current oldest — potentially hundreds."
+                  : "This fetches the 30 days before your oldest synced " +
+                    "meeting."),
+              h("div", { className: "dk-err", style: { marginTop: 0 } },
+                "⚠ Every new transcript is AUTO-ANALYZED with your " +
+                "connected LLM. Each analysis burns real tokens — roughly " +
+                "50–100K per meeting depending on length" +
+                (pullConfirm === "all"
+                  ? ", so a large history can add up to serious spend."
+                  : ".")),
+              h("div", { className: "dk-modal-row" },
+                h("button", { className: "dk-btn",
+                    onClick: function () { setPullConfirm(null); } },
+                  "Cancel"),
+                h("button", { className: "dk-btn dk-btn-primary",
+                    onClick: function () { runPull(pullConfirm); } },
+                  pullConfirm === "all"
+                    ? "Pull everything & analyze"
+                    : "Pull 30 days & analyze"))))
+        : null,
       redoFor
         ? h("div", { className: "dk-modal", onClick: function (e) {
               if (e.target === e.currentTarget) setRedoFor(null);
