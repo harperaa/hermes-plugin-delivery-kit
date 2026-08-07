@@ -265,3 +265,28 @@ def meeting_detail(meeting_id: int):
     if not m:
         raise HTTPException(status_code=404, detail="meeting not found")
     return m
+
+
+# ---------------------------------------------------------------------------
+# Accomplishments — read by the acvc /accomplishments aggregator and shown
+# on the hermes Achievements page. Full credit when every item is done.
+# ---------------------------------------------------------------------------
+
+ACHIEVEMENT = {
+    "id": "delivery-analyst",
+    "name": "Delivery Analyst",
+    "icon": "🤝",
+    "description": "Put your client meetings to work: sync them in and "
+                   "let the kit read the room.",
+}
+
+
+def achievements_progress() -> dict:
+    meetings = store.list_meetings()
+    items = [
+        {"id": "meeting", "label": "Sync or import your first meeting",
+         "done": bool(meetings)},
+        {"id": "analyzed", "label": "Analyze a meeting transcript",
+         "done": any(m.get("analysis") for m in meetings)},
+    ]
+    return {"items": items, "complete": all(i["done"] for i in items)}
