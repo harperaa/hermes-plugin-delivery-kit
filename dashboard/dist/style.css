@@ -222,3 +222,6 @@ li.dk-ev-item:hover {
 /* ---- bottom pagination + history pulls ---- */
 .dk-pagination { display: flex; align-items: center; gap: 10px;
   flex-wrap: wrap; margin-top: 14px; }
+
+/* ---- privacy: blurred meeting names (on by default) ---- */
+.dk-name-blur { filter: blur(7px); user-select: none; }

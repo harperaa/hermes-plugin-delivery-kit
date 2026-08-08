@@ -468,6 +468,18 @@
   // Dashboard tab
   // -------------------------------------------------------------------------
   function DashboardTab(props) {
+    var hideSt = useState(function () {
+      try { return localStorage.getItem("dk-hide-names") !== "0"; }
+      catch (e) { return true; }
+    });
+    var hideNames = hideSt[0], setHideNames = hideSt[1];
+
+    function toggleNames() {
+      var next = !hideNames;
+      setHideNames(next);
+      try { localStorage.setItem("dk-hide-names", next ? "1" : "0"); }
+      catch (e) {}
+    }
     var d = props.dashboard || {};
     var qSt = useState("");
     var q = qSt[0], setQ = qSt[1];
@@ -509,10 +521,21 @@
               },
               it.text,
               h("span", { className: "dk-attrib" },
-                " — " + it.meeting + (it.heldAt ? " · " + fmtWhen(it.heldAt) : "")));
+                " — ",
+                h("span", { className: hideNames ? "dk-name-blur" : "" },
+                  it.meeting),
+                it.heldAt ? " · " + fmtWhen(it.heldAt) : ""));
           })));
     }
     return h("div", null,
+      h("div", { className: "dk-filterbar" },
+        h("button", {
+            className: "dk-tab" + (hideNames ? " dk-tab-on" : ""),
+            title: hideNames
+              ? "Client names are blurred for privacy — click to reveal"
+              : "Click to blur client names (handy for screenshares)",
+            onClick: toggleNames,
+          }, hideNames ? "🙈 Names hidden" : "👁 Hide names")),
       h("input", {
         className: "dk-input dk-search", type: "search", value: q,
         placeholder: "🔎 Filter the dashboard — keyword or meeting title…",
@@ -814,6 +837,19 @@
   function MeetingsTab(props) {
     var busySt = useState(null);      // meeting id being analyzed, or "sync"/"all"
     var busy = busySt[0], setBusy = busySt[1];
+    var hideSt = useState(function () {
+      // privacy default: names hidden until explicitly revealed
+      try { return localStorage.getItem("dk-hide-names") !== "0"; }
+      catch (e) { return true; }
+    });
+    var hideNames = hideSt[0], setHideNames = hideSt[1];
+
+    function toggleNames() {
+      var next = !hideNames;
+      setHideNames(next);
+      try { localStorage.setItem("dk-hide-names", next ? "1" : "0"); }
+      catch (e) {}
+    }
     var noticeSt = useState(null);
     var notice = noticeSt[0], setNotice = noticeSt[1];
     var expandSt = useState(null);
@@ -930,6 +966,14 @@
           onChange: function (e) { runSearch(e.target.value); },
         })),
       h("div", { className: "dk-filterbar" },
+      h("button", {
+          className: "dk-tab" + (hideNames ? " dk-tab-on" : ""),
+          title: hideNames
+            ? "Meeting names are blurred for privacy — click to reveal"
+            : "Click to blur meeting names (handy for screenshares)",
+          onClick: toggleNames,
+        }, hideNames ? "🙈 Names hidden" : "👁 Hide names"),
+      h("span", { className: "dk-fdiv" }),
       TYPES.map(function (t) {
         var n = props.meetings.filter(function (m) { return mType(m) === t[0]; }).length;
         if (!n) return null;
@@ -989,8 +1033,10 @@
                     },
                     it.text,
                     h("span", { className: "dk-attrib" },
-                      " — " + it.meeting +
-                      (it.heldAt ? " · " + fmtWhen(it.heldAt) : "")));
+                      " — ",
+                      h("span", { className: hideNames
+                          ? "dk-name-blur" : "" }, it.meeting),
+                      it.heldAt ? " · " + fmtWhen(it.heldAt) : ""));
                 })),
           preCat > 0
             ? h("div", { style: { color: MUTED, fontSize: 12.5, marginTop: 10 } },
@@ -1023,7 +1069,8 @@
               h("div", { className: "dk-meeting-head",
                          onClick: function () { setExpanded(isOpen ? null : m.id); } },
                 h("span", { className: "dk-chev" + (isOpen ? " dk-chev-open" : "") }, "▸"),
-                h("span", { style: { fontWeight: 700, flex: 1 } }, m.title),
+                h("span", { className: hideNames ? "dk-name-blur" : "",
+                    style: { fontWeight: 700, flex: 1 } }, m.title),
                 m.analysis
                   ? h(React.Fragment, null,
                       m.analysis.meetingType
