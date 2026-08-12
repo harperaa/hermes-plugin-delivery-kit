@@ -809,9 +809,14 @@
         ? h("span", { style: { color: MUTED, fontSize: 12.5 } },
             "Stopped at " + batch.done + "/" + batch.total + ".")
         : null,
-      !batchRunning && !batch.cancelled && batch.finishedAt && (batch.failed || 0) > 0
+      // only actionable while some meeting still LACKS analysis — a
+      // historical batch record must not show a permanent red error
+      // after every meeting has since been analyzed
+      !batchRunning && !batch.cancelled && batch.finishedAt &&
+        (batch.failed || 0) > 0 && unanalyzed > 0
         ? h("span", { style: { color: "#f87171", fontSize: 12.5 } },
-            "Last run: " + batch.failed + " of " + batch.total + " failed — retry with ✨")
+            "Last run: " + batch.failed + " of " + batch.total +
+            " failed (" + unanalyzed + " still unanalyzed) — retry with ✨")
         : null,
       h("span", { style: { flex: 1 } }),
       h("button", {
