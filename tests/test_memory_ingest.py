@@ -348,3 +348,60 @@ def test_conversations_terminal_flag_skips_db(home, monkeypatch):
         raise AssertionError("DB touched after completion")
     monkeypatch.setattr(ci, "_ro", boom)
     assert ci._ingest_conversations(FakeAdapter(), st) == 0
+
+
+# --- deriver-liveness watchdog ----------------------------------------------
+
+class QueueAdapter(FakeAdapter):
+    def __init__(self, pending, in_progress, completed):
+        super().__init__()
+        self.workspace = "hermes"
+        self.q = {"pending_work_units": pending,
+                  "in_progress_work_units": in_progress,
+                  "completed_work_units": completed}
+
+    def _request(self, method, path, body=None):
+        assert "queue/status" in path
+        return self.q
+
+
+def test_watchdog_first_observation_never_alarms(home):
+    st = {}
+    out = ci.check_memory_health(QueueAdapter(5000, 0, 100), st)
+    assert out["status"] == "ok"          # no prior baseline -> no alarm
+    assert st["deriver_health"]["completed"] == 100
+
+
+def test_watchdog_detects_stall_only_after_an_hour(home, monkeypatch):
+    st = {}
+    t = {"now": 1000.0}
+    monkeypatch.setattr(ci.time, "time", lambda: t["now"])
+    ci.check_memory_health(QueueAdapter(5000, 0, 100), st)
+    # 10 minutes later, still frozen -> too soon to alarm
+    t["now"] = 1600.0
+    assert ci.check_memory_health(
+        QueueAdapter(5000, 0, 100), st)["status"] == "ok"
+    # an hour past the FIRST baseline... baseline was refreshed at 1600
+    t["now"] = 4700.0
+    assert ci.check_memory_health(
+        QueueAdapter(5000, 0, 100), st)["status"] == "stalled"
+
+
+def test_watchdog_progress_resets(home, monkeypatch):
+    st = {}
+    t = {"now": 1000.0}
+    monkeypatch.setattr(ci.time, "time", lambda: t["now"])
+    ci.check_memory_health(QueueAdapter(5000, 0, 100), st)
+    t["now"] = 5000.0
+    # completions moved -> healthy, baseline updates
+    assert ci.check_memory_health(
+        QueueAdapter(4000, 12, 1100), st)["status"] == "ok"
+
+
+def test_watchdog_unreachable_is_reported_not_raised(home):
+    class Broken(FakeAdapter):
+        workspace = "hermes"
+        def _request(self, *_a, **_k):
+            raise RuntimeError("conn refused")
+    out = ci.check_memory_health(Broken(), {})
+    assert out["status"] == "unreachable"

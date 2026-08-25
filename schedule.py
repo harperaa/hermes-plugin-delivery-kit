@@ -157,6 +157,22 @@ try:
     _adapter = _mi.resolve_adapter()
     if _adapter.available:
         memory_ingest_result = _ci.run_ingest(_adapter)
+        _health = _ci.check_memory_health(_adapter, _ci.load_state())
+        memory_ingest_result["deriverHealth"] = _health
+        if _health.get("status") == "stalled":
+            # Non-empty stdout breaks the cron's silence ON PURPOSE: the
+            # gateway delivers this warning into the user's chat.
+            print(
+                "MEMORY SYSTEM WARNING: the background memory processor "
+                "(honcho-deriver) appears STALLED - "
+                f"{{_health.get('pending')}} items are waiting and nothing "
+                "has processed for over an hour. Your conversations are "
+                "still being captured, but memory reasoning is paused. "
+                "Fix: in Railway, open the honcho-deriver service -> "
+                "Settings -> Deploy and confirm the Custom Start Command "
+                "is: python -m src.deriver  - then Deploy a fresh "
+                "deployment (not Redeploy). If it keeps happening, check "
+                "the service logs for crashes.")
     else:
         memory_ingest_result = {{"skipped": _adapter.reason}}
 except Exception as exc:

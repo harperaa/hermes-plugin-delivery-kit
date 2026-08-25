@@ -340,6 +340,37 @@ def _ingest_conversations(adapter, st: dict, batch: int = 2000,
     return total
 
 
+def check_memory_health(adapter, st: dict) -> dict:
+    """Deriver-liveness watchdog for the hourly sync.
+
+    The failure mode this catches: the memory API accepts writes (so
+    everything LOOKS fine) while the background deriver isn't running —
+    work piles up as pending with nothing in progress, and recall quality
+    silently rots. Stalled = pending work, zero in progress, and no
+    completions since the previous check (~an hour ago). One healthy
+    observation resets the clock, so a busy-but-slow deriver never alarms.
+    """
+    try:
+        d = adapter._request(
+            "GET", f"/v3/workspaces/{adapter.workspace}/queue/status")
+    except Exception as exc:
+        return {"status": "unreachable", "detail": str(exc)[:120]}
+    pending = d.get("pending_work_units") or 0
+    in_progress = d.get("in_progress_work_units") or 0
+    completed = d.get("completed_work_units") or 0
+    prev = st.get("deriver_health") or {}
+    now = time.time()
+    stalled = bool(
+        pending > 20 and in_progress == 0 and prev
+        and completed <= prev.get("completed", 0)
+        and now - prev.get("t", 0) >= 3000)
+    st["deriver_health"] = {"t": now, "completed": completed,
+                            "pending": pending}
+    save_state(st)
+    return {"status": "stalled" if stalled else "ok", "pending": pending,
+            "in_progress": in_progress, "completed": completed}
+
+
 def run_ingest(adapter) -> dict:
     """Run every source against ``adapter``; per-source errors are isolated."""
     st = load_state()
