@@ -82,12 +82,13 @@ class HonchoAdapter:
     supports_sessions = True
 
     def __init__(self, *, base_url: str, api_key: str, workspace: str,
-                 user_peer: str, user_aliases: dict,
+                 user_peer: str, user_aliases: dict, ai_peer: str = "hermes",
                  request_fn: Optional[Callable[..., Any]] = None):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.workspace = workspace
         self.user_peer = user_peer
+        self.ai_peer = ai_peer
         # lowercase alias -> peer id (from the connector's userPeerAliases)
         self.user_aliases = {str(k).lower(): str(v)
                              for k, v in (user_aliases or {}).items()}
@@ -173,13 +174,16 @@ def _build_honcho_adapter(request_fn=None):
     workspace = block.get("workspace") or raw.get("workspace") or host
     user_peer = sanitize_id(block.get("peerName") or raw.get("peerName")
                             or "user", "user")
+    ai_peer = sanitize_id(block.get("aiPeer") or raw.get("aiPeer") or host,
+                          "assistant")
     aliases = {}
     for src in (raw.get("userPeerAliases"), block.get("userPeerAliases")):
         if isinstance(src, dict):
             aliases.update(src)
     return HonchoAdapter(base_url=base_url, api_key=api_key,
                          workspace=workspace, user_peer=user_peer,
-                         user_aliases=aliases, request_fn=request_fn)
+                         user_aliases=aliases, ai_peer=ai_peer,
+                         request_fn=request_fn)
 
 
 def resolve_adapter(request_fn=None):

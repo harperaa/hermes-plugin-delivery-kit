@@ -1,6 +1,11 @@
 """Instance-content ingest into the connected memory provider.
 
 Sources (each skipped silently when its plugin/data is absent):
+  chats      historical conversations from state.db — only messages that
+             PREDATE the memory connector's wiring (honcho.json mtime);
+             the connector owns everything after. Sessions named by the
+             sanitized gateway session key; user/assistant turns to their
+             respective peers. Resumes via last_msg_id across runs.
   meetings   delivery-kit meetings.db — transcripts split by speaker, each
              speaker a peer (when the adapter supports peers), the user's
              own lines mapped to their configured peer; summary + analysis
@@ -255,6 +260,74 @@ def _ingest_insights(adapter, st: dict, limit: int = 1000) -> int:
     return len(rows)
 
 
+def _ingest_conversations(adapter, st: dict, limit: int = 2000) -> int:
+    """Historical chat backfill — messages that predate the memory connector.
+
+    The connector captures conversations LIVE from the moment it was wired
+    (honcho.json's mtime); everything older is history it never saw. This
+    collector ships that history once — session named by the sanitized
+    gateway session key (the same name live capture would use), user turns
+    to the configured user peer, assistant turns to the AI peer — and
+    resumes via last_msg_id, so a large backlog drains across hourly runs.
+    Without peer support the turns flatten to "User:"/"Assistant:" prefixes.
+    """
+    db = _home() / "state.db"
+    hj = _home() / "honcho.json"
+    if not db.exists() or not hj.exists():
+        return 0
+    boundary = hj.stat().st_mtime
+    last = st.get("last_msg_id", 0)
+    con = _ro(db)
+    rows = con.execute(
+        "select m.id, m.session_id, m.role, m.content, s.session_key "
+        "from messages m left join sessions s on s.id = m.session_id "
+        "where m.id > ? and m.timestamp < ? "
+        "and m.role in ('user','assistant') "
+        "and m.content is not null and length(trim(m.content)) > 0 "
+        "order by m.id limit ?", (last, boundary, limit)).fetchall()
+    con.close()
+    if not rows:
+        return 0
+    user = getattr(adapter, "user_peer", "user")
+    ai = getattr(adapter, "ai_peer", "assistant")
+
+    def _session_name(skey, sid):
+        original = skey or sid
+        out = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(original)).strip("-") \
+            or str(sid)
+        if len(out) > 100:
+            suffix = "-" + hashlib.sha256(
+                str(original).encode()).hexdigest()[:8]
+            out = out[:100 - len(suffix)] + suffix
+        return out
+
+    by_session: dict = {}
+    for mid, sid, role, content, skey in rows:
+        by_session.setdefault(_session_name(skey, sid), []).append(
+            (mid, role, content))
+    made = st.setdefault("made_sessions", [])
+    n = 0
+    for name, items in by_session.items():
+        session = adapter.ensure_session(name)
+        if name not in made:
+            made.append(name)
+        msgs = []
+        for _mid, role, content in items:
+            if adapter.supports_peers:
+                peer = user if role == "user" else ai
+                adapter.ensure_peer(peer)
+                msgs.append((peer, content))
+            else:
+                prefix = "User: " if role == "user" else "Assistant: "
+                msgs.append((user, prefix + content))
+        adapter.post_messages(session, msgs)
+        st["last_msg_id"] = max(st.get("last_msg_id", 0),
+                                max(m for m, _, _ in items))
+        save_state(st)
+        n += len(msgs)
+    return n
+
+
 def run_ingest(adapter) -> dict:
     """Run every source against ``adapter``; per-source errors are isolated."""
     st = load_state()
@@ -262,6 +335,7 @@ def run_ingest(adapter) -> dict:
     acvc = _home() / "plugins-data" / "ai-cyber-value-creator"
     od = _home() / "plugins-data" / "offer-doc"
     for name, fn in (
+        ("conversations", lambda: _ingest_conversations(adapter, st)),
         ("meetings", lambda: _ingest_meetings(adapter, st)),
         ("company_context", lambda: _ingest_doc(
             adapter, st, "company-context",

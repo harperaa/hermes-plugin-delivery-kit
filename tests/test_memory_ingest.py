@@ -237,3 +237,70 @@ def test_run_ingest_isolates_source_errors(home, monkeypatch):
     out = ci.run_ingest(a)
     assert str(out["meetings"]).startswith("error: boom"[:12])
     assert out["briefs"] == 0 and out["insights"] == 0
+
+
+# --- historical conversations -----------------------------------------------
+
+def _make_state_db(home, rows):
+    con = sqlite3.connect(home / "state.db")
+    con.execute("create table sessions (id text primary key, session_key text)")
+    con.execute("create table messages (id integer primary key,"
+                " session_id text, role text, content text, timestamp real)")
+    seen = set()
+    for mid, sid, skey, role, content, ts in rows:
+        if sid not in seen:
+            con.execute("insert into sessions values (?,?)", (sid, skey))
+            seen.add(sid)
+        con.execute("insert into messages (id, session_id, role, content,"
+                    " timestamp) values (?,?,?,?,?)",
+                    (mid, sid, role, content, ts))
+    con.commit()
+    con.close()
+
+
+def test_conversations_backfill_respects_connector_boundary(home):
+    import os as _os
+    (home / "honcho.json").write_text("{}")
+    wired_at = _os.path.getmtime(home / "honcho.json")
+    _make_state_db(home, [
+        (1, "s1", "web-chat-1", "user", "old question", wired_at - 100),
+        (2, "s1", "web-chat-1", "assistant", "old answer", wired_at - 99),
+        (3, "s1", "web-chat-1", "tool", "tool noise", wired_at - 98),
+        (4, "s1", "web-chat-1", "user", "live msg", wired_at + 100),
+    ])
+    a = FakeAdapter()
+    a.ai_peer = "hermes"
+    st = {}
+    n = ci._ingest_conversations(a, st)
+    assert n == 2  # tool skipped, post-boundary skipped
+    flat = [(p, c) for _, msgs in a.posts for p, c in msgs]
+    assert ("allen", "old question") in flat
+    assert ("hermes", "old answer") in flat
+    assert not any("live msg" in c for _, c in flat)
+    assert "web-chat-1" in a.sessions
+    assert st["last_msg_id"] == 2
+    # resume: nothing new below the boundary
+    assert ci._ingest_conversations(FakeAdapter(), st) == 0
+
+
+def test_conversations_flatten_without_peers(home):
+    import os as _os
+    (home / "honcho.json").write_text("{}")
+    wired_at = _os.path.getmtime(home / "honcho.json")
+    _make_state_db(home, [
+        (1, "s1", None, "user", "hello", wired_at - 10),
+        (2, "s1", None, "assistant", "hi there", wired_at - 9),
+    ])
+    a = FakeAdapter()
+    a.supports_peers = False
+    st = {}
+    assert ci._ingest_conversations(a, st) == 2
+    flat = [(p, c) for _, msgs in a.posts for p, c in msgs]
+    assert ("allen", "User: hello") in flat
+    assert ("allen", "Assistant: hi there") in flat
+    assert "s1" in a.sessions  # falls back to hermes session id
+
+
+def test_conversations_noop_without_connector(home):
+    _make_state_db(home, [(1, "s1", "k", "user", "x", 1.0)])
+    assert ci._ingest_conversations(FakeAdapter(), {}) == 0
