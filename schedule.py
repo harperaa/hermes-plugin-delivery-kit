@@ -147,6 +147,21 @@ try:
 except Exception as exc:
     analyze_errors.append(str(exc)[:150])
 
+# ---- memory ingest: ship new content to the user's connected memory --------
+# provider (capability-negotiated; silent no-op when none is configured;
+# NEVER fatal to the sync run). Runs after the provider pull + analyze so
+# meetings fetched THIS run ingest THIS run.
+try:
+    _mi = importlib.import_module(PKG + ".memory_ingest")
+    _ci = importlib.import_module(PKG + ".content_ingest")
+    _adapter = _mi.resolve_adapter()
+    if _adapter.available:
+        memory_ingest_result = _ci.run_ingest(_adapter)
+    else:
+        memory_ingest_result = {{"skipped": _adapter.reason}}
+except Exception as exc:
+    memory_ingest_result = {{"error": str(exc)[:200]}}
+
 settings_path = Path({settings_path!r})
 try:
     prev = json.loads(settings_path.read_text())
@@ -157,6 +172,7 @@ prev["results"] = results
 prev["autoAnalyzed"] = analyzed
 if analyze_errors:
     prev["analyzeErrors"] = analyze_errors[:5]
+prev["memoryIngest"] = memory_ingest_result
 settings_path.write_text(json.dumps(prev, indent=2))
 # stdout intentionally empty -> silent cron delivery
 '''
