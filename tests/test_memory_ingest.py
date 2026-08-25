@@ -279,7 +279,8 @@ def test_conversations_backfill_respects_connector_boundary(home):
     assert not any("live msg" in c for _, c in flat)
     assert "web-chat-1" in a.sessions
     assert st["last_msg_id"] == 2
-    # resume: nothing new below the boundary
+    # drained -> terminal flag set; later runs are pure no-ops
+    assert st["chat_backfill_complete"] is True
     assert ci._ingest_conversations(FakeAdapter(), st) == 0
 
 
@@ -304,3 +305,46 @@ def test_conversations_flatten_without_peers(home):
 def test_conversations_noop_without_connector(home):
     _make_state_db(home, [(1, "s1", "k", "user", "x", 1.0)])
     assert ci._ingest_conversations(FakeAdapter(), {}) == 0
+
+
+
+def test_conversations_greedy_drains_multi_batch(home):
+    import os as _os
+    (home / "honcho.json").write_text("{}")
+    wired_at = _os.path.getmtime(home / "honcho.json")
+    rows = [(i, "s1", "chat-x", "user", f"msg {i}", wired_at - 1000 + i)
+            for i in range(1, 8)]
+    _make_state_db(home, rows)
+    a = FakeAdapter()
+    st = {}
+    # batch=3 forces multiple loops; greedy drain finishes in ONE call
+    assert ci._ingest_conversations(a, st, batch=3) == 7
+    assert st["chat_backfill_complete"] is True
+    assert st["last_msg_id"] == 7
+
+
+def test_conversations_budget_stops_and_resumes(home, monkeypatch):
+    import os as _os
+    (home / "honcho.json").write_text("{}")
+    wired_at = _os.path.getmtime(home / "honcho.json")
+    _make_state_db(home, [(i, "s1", "k", "user", f"m{i}", wired_at - 10)
+                          for i in range(1, 5)])
+    clock = iter([0.0, 0.0, 100.0, 100.0, 100.0, 100.0])
+    monkeypatch.setattr(ci.time, "monotonic", lambda: next(clock))
+    a = FakeAdapter()
+    st = {}
+    # budget 50 "seconds": first batch runs, second loop check exceeds budget
+    n = ci._ingest_conversations(a, st, batch=2, budget_seconds=50)
+    assert n == 2 and not st.get("chat_backfill_complete")
+    # next run (fresh budget) finishes and flips the flag
+    monkeypatch.setattr(ci.time, "monotonic", lambda: 0.0)
+    assert ci._ingest_conversations(FakeAdapter(), st, batch=10) == 2
+    assert st["chat_backfill_complete"] is True
+
+
+def test_conversations_terminal_flag_skips_db(home, monkeypatch):
+    st = {"chat_backfill_complete": True}
+    def boom(*_a, **_k):
+        raise AssertionError("DB touched after completion")
+    monkeypatch.setattr(ci, "_ro", boom)
+    assert ci._ingest_conversations(FakeAdapter(), st) == 0
