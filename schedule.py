@@ -178,6 +178,35 @@ try:
 except Exception as exc:
     memory_ingest_result = {{"error": str(exc)[:200]}}
 
+# ---- cron health: hermes cron doctor (upstream, read-only) -----------------
+# Detects silently-degraded scheduled jobs: failed runs/deliveries, missing
+# scripts, and next_run_at parked in the past (dead ticker / downed
+# gateway). Exit 1 breaks the cron's silence ON PURPOSE -> chat warning.
+# Older hermes builds without the subcommand skip silently (exit 2/usage).
+cron_doctor_result = {{"skipped": "unavailable"}}
+try:
+    import shutil as _shutil
+    import subprocess as _subprocess
+    _hermes_bin = _shutil.which("hermes") or "/opt/hermes/bin/hermes"
+    _dr = _subprocess.run([_hermes_bin, "cron", "doctor"],
+                          capture_output=True, text=True, timeout=60)
+    if _dr.returncode == 0:
+        cron_doctor_result = {{"ok": True}}
+    elif _dr.returncode == 1:
+        _detail = (_dr.stdout or _dr.stderr or "").strip()[:900]
+        cron_doctor_result = {{"ok": False, "detail": _detail}}
+        print(
+            "SCHEDULED JOBS WARNING: `hermes cron doctor` found unhealthy "
+            "scheduled jobs - some automation may be silently NOT running "
+            "(failed runs, missing scripts, or a job whose next run time "
+            "is stuck in the past, which usually means the scheduler/"
+            "gateway is down). Doctor report:\\n" + _detail + "\\n"
+            "Fix: restart the gateway service (Railway: Deploy a fresh "
+            "deployment of the hermes service), then re-run `hermes cron "
+            "doctor` to confirm it reports healthy.")
+except Exception:
+    pass
+
 settings_path = Path({settings_path!r})
 try:
     prev = json.loads(settings_path.read_text())
@@ -189,6 +218,7 @@ prev["autoAnalyzed"] = analyzed
 if analyze_errors:
     prev["analyzeErrors"] = analyze_errors[:5]
 prev["memoryIngest"] = memory_ingest_result
+prev["cronDoctor"] = cron_doctor_result
 settings_path.write_text(json.dumps(prev, indent=2))
 # stdout intentionally empty -> silent cron delivery
 '''
