@@ -111,6 +111,15 @@ import importlib
 providers = importlib.import_module(PKG + ".providers")
 store = importlib.import_module(PKG + ".store")
 
+# settings double as the run journal AND the warn-once latch store
+settings_path = Path({settings_path!r})
+try:
+    prev = json.loads(settings_path.read_text())
+except Exception:
+    prev = {{}}
+if not isinstance(prev, dict):
+    prev = {{}}
+
 results = {{}}
 for p in providers.PROVIDERS:
     pid = p["id"]
@@ -159,9 +168,13 @@ try:
         memory_ingest_result = _ci.run_ingest(_adapter)
         _health = _ci.check_memory_health(_adapter, _ci.load_state())
         memory_ingest_result["deriverHealth"] = _health
-        if _health.get("status") == "stalled":
+        _now_w = time.time()
+        if _health.get("status") == "stalled" \
+                and _now_w - prev.get("memoryWarnAt", 0) > 24 * 3600:
             # Non-empty stdout breaks the cron's silence ON PURPOSE: the
-            # gateway delivers this warning into the user's chat.
+            # gateway delivers this warning into the user's chat — at most
+            # once per day while the condition persists.
+            prev["memoryWarnAt"] = _now_w
             print(
                 "MEMORY SYSTEM WARNING: the background memory processor "
                 "(honcho-deriver) appears STALLED - "
@@ -195,7 +208,9 @@ try:
     elif _dr.returncode == 1:
         _detail = (_dr.stdout or _dr.stderr or "").strip()[:900]
         cron_doctor_result = {{"ok": False, "detail": _detail}}
-        print(
+        if time.time() - prev.get("cronDoctorWarnAt", 0) > 24 * 3600:
+            prev["cronDoctorWarnAt"] = time.time()
+            print(
             "SCHEDULED JOBS WARNING: `hermes cron doctor` found unhealthy "
             "scheduled jobs - some automation may be silently NOT running "
             "(failed runs, missing scripts, or a job whose next run time "
@@ -207,11 +222,6 @@ try:
 except Exception:
     pass
 
-settings_path = Path({settings_path!r})
-try:
-    prev = json.loads(settings_path.read_text())
-except Exception:
-    prev = {{}}
 prev["lastRun"] = time.time()
 prev["results"] = results
 prev["autoAnalyzed"] = analyzed
