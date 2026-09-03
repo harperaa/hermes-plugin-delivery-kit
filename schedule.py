@@ -298,13 +298,14 @@ def ensure_sync_job(tz_offset_minutes: Optional[int] = None,
         if s["enabled"]:
             job = cron_jobs.create_job(
                 prompt=None, schedule=expr, name=SYNC_JOB_NAME,
-                deliver="local", script=SCRIPT_NAME, no_agent=True)
+                deliver="origin", script=SCRIPT_NAME, no_agent=True)
             s["cronJobId"] = job["id"]
             logger.info("delivery-kit: created auto-sync job %s (%s)",
                         job["id"], expr)
     elif s["enabled"]:
         cron_jobs.update_job(job["id"], {
             "schedule": expr,
+            "deliver": "origin",   # warnings reach chat when a push channel exists
             "script": SCRIPT_NAME,
             "no_agent": True,
             "enabled": True,

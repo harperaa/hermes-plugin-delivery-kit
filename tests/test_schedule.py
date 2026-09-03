@@ -27,3 +27,22 @@ def test_sync_script_warn_latches():
     assert 'prev["memoryWarnAt"]' in script
     assert 'prev.get("cronDoctorWarnAt", 0) > 24 * 3600' in script
     assert 'prev["cronDoctorWarnAt"]' in script
+
+
+def test_sync_job_delivers_to_origin(monkeypatch, tmp_path):
+    """Health warnings must be able to reach chat: origin -> home channel -> local."""
+    import schedule
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    created, updated = {}, {}
+    class FakeJobs:
+        def resolve_job_ref(self, ref): return None if not created else created
+        def create_job(self, **kw):
+            created.update(kw); created["id"] = "j1"; return created
+        def update_job(self, jid, patch): updated.update(patch)
+        def remove_job(self, jid): pass
+    monkeypatch.setitem(__import__("sys").modules, "cron", type("m", (), {"jobs": FakeJobs()})())
+    monkeypatch.setitem(__import__("sys").modules, "cron.jobs", FakeJobs())
+    schedule.ensure_sync_job(tz_offset_minutes=240)
+    assert created["deliver"] == "origin"
+    schedule.ensure_sync_job(tz_offset_minutes=240)
+    assert updated.get("deliver") == "origin"
