@@ -15,7 +15,7 @@ Sources (each skipped silently when its plugin/data is absent):
   docs       acvc company-context.md and offer-doc.md — re-sent on change
              (hash-tracked), sessions named for the doc.
   briefs     daily-brief markdown files, one session per brief.
-  insights   youtube-insights — attributed to a peer per SOURCE CHANNEL in
+  insights   long-form — attributed to a peer per SOURCE CHANNEL in
              sessions ``yt-<channel>``; incremental via a (first_seen, id)
              watermark.
 
@@ -218,7 +218,7 @@ def _ingest_briefs(adapter, st: dict) -> int:
 
 
 def _ingest_insights(adapter, st: dict, limit: int = 1000) -> int:
-    db = _home() / "plugins-data" / "youtube-insights" / "data.db"
+    db = _home() / "plugins-data" / "long-form" / "data.db"
     if not db.exists():
         return 0
     wm_seen = st.get("insight_wm_seen", "")
@@ -252,7 +252,7 @@ def _ingest_insights(adapter, st: dict, limit: int = 1000) -> int:
     for peer, bodies in by_channel.items():
         adapter.ensure_peer(peer)
         session = adapter.ensure_session(
-            f"yt-{peer}" if adapter.supports_peers else "youtube-insights")
+            f"yt-{peer}" if adapter.supports_peers else "long-form")
         adapter.post_messages(session, [(peer, b) for b in bodies])
     st["insight_wm_seen"] = rows[-1][4]
     st["insight_wm_id"] = rows[-1][0]

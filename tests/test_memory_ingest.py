@@ -195,7 +195,7 @@ def test_doc_hash_tracking(home):
 
 
 def test_insights_per_channel_with_watermark(home):
-    d = home / "plugins-data" / "youtube-insights"
+    d = home / "plugins-data" / "long-form"
     d.mkdir(parents=True)
     con = sqlite3.connect(d / "data.db")
     con.execute("create table insights (id text primary key, text text,"
